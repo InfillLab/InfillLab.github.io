@@ -1058,3 +1058,33 @@
     font-size: 9px;
   }
 }
+.reset-settings {
+  margin-top: 16px;
+  background: #f5f8ee;
+  border: 1px solid #d9e4ca;
+  border-radius: 5px;
+  padding: 9px 12px;
+  color: #64784f;
+  font-size: 12px;
+}
+.single-controls > details:nth-child(2) {
+  display: none;
+}
+.single-controls > details:nth-child(3) .select-field,
+.single-controls
+  > details:nth-child(3)
+  .number-field:has(input[aria-label="Acceptance half-width"]),
+.single-controls > details:nth-child(3) .weight-field,
+.single-controls > details:nth-child(3) .weight-field + .field-note {
+  display: none;
+}
+.studio-app .setup-hint,
+.studio-app .material-card em,
+.studio-app .material-card small,
+.studio-app .scene-help,
+.studio-app .scene-materials,
+.studio-app .result-metrics span,
+.studio-app .material-disclaimer,
+.studio-app .material-choices small {
+  color: #68735e;
+}

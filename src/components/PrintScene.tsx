@@ -184,6 +184,13 @@ export function PrintScene({
     <div className="scene">
       <canvas
         ref={canvas}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            setAngle((a) => a + (e.key === "ArrowLeft" ? -0.15 : 0.15));
+          }
+        }}
         aria-label="Animated deposition on a rotatable build plate"
         onPointerDown={(e) => {
           drag.current = e.clientX;
@@ -199,7 +206,9 @@ export function PrintScene({
         onPointerCancel={() => (drag.current = null)}
       />
       <div className="scene-help">
-        {flat ? "Top view" : "Drag to rotate · layer height exaggerated ×4"}
+        {flat
+          ? "Top view · schematic playback"
+          : "Drag to rotate · layer height exaggerated ×4"}
       </div>
       <div className="zoom-tools">
         <button

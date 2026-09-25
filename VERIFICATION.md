@@ -19,3 +19,12 @@ Tests cover the volume upper bound, conservation, both switch directions and non
 ## Limits
 
 No real-printer validation, mechanical validation or live GitHub deployment was performed. Browser checks are a manual smoke test, not a complete cross-browser accessibility certification. The application must not be used to claim improved material strength without independent evidence.
+
+## Simplified workspace update
+
+- Main workspace uses material dialogs, three basic sample controls and collapsed advanced sections.
+- Added smooth schematic deposition on a rotatable projected build plate, custom filament colours, single-material mode, PNG export and colour metadata in JSON exports.
+- 14 model tests pass, including complete single-material allocation without transition waste and compatibility with older JSON configurations.
+- Production build passed. Browser checks verified single-material execution, addition of a second material, colour selection, rerunning, comparison and collapsed settings.
+- At a 390 px mobile viewport there was no document overflow, and the material dialog remained usable. No browser console errors were observed.
+- Playback speed is illustrative, not physical print time. Layer height is exaggerated by four in perspective view.

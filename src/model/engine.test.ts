@@ -200,12 +200,30 @@ describe("input validation", () => {
   });
 });
 
-describe('single material mode',()=>{
- it('allocates every layer with no transition purge or composition change',()=>{
- const run=runStudy({...DEFAULT,mode:'single',layers:3,transitionVolume:0.1,iterations:10});
- for(const r of run.results){expect(r.complete).toBe(true);expect(r.discarded).toBeCloseTo(0);expect(r.used).toBeCloseTo(run.segments.reduce((sum,s)=>sum+s.volume,0));expect(r.steps.every(s=>s.purgeBefore===0&&s.cStart===0&&s.cEnd===0)).toBe(true);}
- });
- it('imports previous multi-material configurations without a mode field',()=>{
- const {mode,...legacy}=DEFAULT;expect(parseConfig(legacy).mode).toBe('multi');
- });
+describe("single material mode", () => {
+  it("allocates every layer with no transition purge or composition change", () => {
+    const run = runStudy({
+      ...DEFAULT,
+      mode: "single",
+      layers: 3,
+      transitionVolume: 0.1,
+      iterations: 10,
+    });
+    for (const r of run.results) {
+      expect(r.complete).toBe(true);
+      expect(r.discarded).toBeCloseTo(0);
+      expect(r.used).toBeCloseTo(
+        run.segments.reduce((sum, s) => sum + s.volume, 0),
+      );
+      expect(
+        r.steps.every(
+          (s) => s.purgeBefore === 0 && s.cStart === 0 && s.cEnd === 0,
+        ),
+      ).toBe(true);
+    }
+  });
+  it("imports previous multi-material configurations without a mode field", () => {
+    const { mode, ...legacy } = DEFAULT;
+    expect(parseConfig(legacy).mode).toBe("multi");
+  });
 });

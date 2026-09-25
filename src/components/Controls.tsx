@@ -82,7 +82,9 @@ export function Controls({
     />
   );
   return (
-    <div className="controls">
+    <div
+      className={`controls ${compact && c.mode === "single" ? "single-controls" : ""}`}
+    >
       {benchmark && (
         <p className="small-note benchmark-note">
           The manuscript case uses two 60 mm segments. Geometry and composition

@@ -36,20 +36,20 @@ Vite koristi relativni `base: './'`, pa ime repozitorija nije potrebno upisivati
 - Generira paralelne, chevron ili naizmjenicne kratke putanje kroz jedan ili vise slojeva.
 - Prati pretpostavljeni udio materijala B prema istisnutom volumenu.
 - Usporeduje fiksni raster, najblizi dopusteni segment i eksperimentalnu adaptivnu pretragu.
-- Prikazuje odlaganje po segmentima, pomake bez ekstrudiranja, sastav i lokalne granice prihvatljivosti.
+- Animira postupno polaganje putanja, kretanje mlaznice i slojeve na rotirajucoj radnoj ploci. Animacija je shematska, nije simulacija stvarne brzine stroja.
 - Izracunava dodijeljeni i odbaceni volumen, duljinu praznih pomaka, pokrivenost i idealizirano vrijeme.
 - Ponovljene pretrage koriste zapisane seedove. Glavni prikaz koristi prvi seed, bez skrivene selekcije najboljeg rezultata.
-- Izvozi puni eksperiment u JSON, usporednu tablicu u CSV i trenutni prikaz putanje u SVG. JSON se moze ponovno uvesti; rezultati se tada ponovno racunaju.
+- Izvozi puni eksperiment u JSON, usporednu tablicu u CSV i trenutni prikaz putanje u PNG. JSON se moze ponovno uvesti; rezultati se tada ponovno racunaju.
 - Ukljucuje provjerljivi slucaj s dva segmenta i iscrpnim pretrazivanjem svih osam rasporeda.
 
 ## Predlozeni prvi eksperiment
 
-1. Pocetni primjer pokrece se automatski.
-2. Kliknite `Comparison` za usporedbu metoda na istoj geometriji.
-3. Promijenite `Transition volume`, razmak ili `Path family`, zatim kliknite `Run comparison`.
+1. Kliknite karticu materijala da odaberete filament i boju. Drugi materijal dodaje se gumbom `Add a second material`.
+2. Pokrenite `Start simulation`, zatim kliknite `Compare` za usporedbu metoda na istoj geometriji.
+3. Promijenite `Transition volume`, razmak ili `Path family`, zatim kliknite `Start simulation`.
 4. Promatrajte razliku izmedu `Complete allocation` i `Partial allocation`. Kraca nepotpuna putanja nije dokaz boljeg ispisa.
-5. Odaberite `Manuscript verification case`. Tocno rjesenje treba imati 12 mm3 dodijeljenog materijala, bez otpada i oko 28.2843 mm praznog pomaka.
-6. Izvezite JSON radi ponovljivosti i CSV/SVG za daljnju obradu i figure.
+5. Odaberite `Advanced settings > Reference case > Load verification case`. Tocno rjesenje treba imati 12 mm3 dodijeljenog materijala, bez otpada i oko 28.2843 mm praznog pomaka.
+6. Izvezite JSON radi ponovljivosti i CSV/PNG za daljnju obradu i figure.
 
 ## Znanstveni opseg
 
@@ -59,7 +59,7 @@ Model prati jednu monotonicnu promjenu materijala. Cijeli segment mora stati u s
 
 Adaptivna pretraga koristi pojacavanje odabranih veza inspirirano transportnim mrezama. Nije implementacija objavljenog Slime Mould Algorithm algoritma i ne jamci globalni optimum. Za mali referentni slucaj optimum se provjerava iscrpnim pretrazivanjem.
 
-Detaljne jednadzbe, ogranicenja i 11 referenci dostupni su u aplikaciji pod `Methods & references`. Ne prenose se PDF-ovi radova.
+Detaljne jednadzbe, ogranicenja i 11 referenci dostupni su u aplikaciji pod `Methods`. Ne prenose se PDF-ovi radova.
 
 ## Struktura
 
@@ -70,7 +70,9 @@ Detaljne jednadzbe, ogranicenja i 11 referenci dostupni su u aplikaciji pod `Met
 - `src/components/Controls.tsx`: parametri eksperimenta.
 - `src/components/Methods.tsx`: metodologija i reference.
 - `src/io.ts`: izvoz rezultata.
-- `src/App.tsx`: radni prostor i usporedba.
+- `src/Studio.tsx`: pojednostavljeni radni prostor, materijali i usporedba.
+- `src/components/PrintScene.tsx`: animacija i projekcija slojeva.
+- `src/studio.css`: dizajn novog sucelja.
 - `src/styles.css`: responzivni dizajn i stil za ispis.
 
-Konfiguracija se lokalno pamti u pregledniku. `Reset experiment` vraca pocetne vrijednosti. Nema korisnickih racuna ni slanja rezultata na posluzitelj.
+Eksperiment spremite u JSON za kasniji uvoz. `Advanced settings > Reset to starter sample` vraca pocetne vrijednosti nakon potvrde `Apply changes`. Nema korisnickih racuna ni slanja rezultata na posluzitelj.

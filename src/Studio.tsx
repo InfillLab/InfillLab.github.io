@@ -89,7 +89,7 @@ export default function Studio() {
   }, [modal]);
   useEffect(() => () => worker.current?.terminate(), []);
   useEffect(() => {
-    if (!playing || !result) return;
+    if (!playing || !result || page !== "studio" || modal) return;
     let last = performance.now(),
       frame = 0;
     const tick = (now: number) => {
@@ -100,7 +100,7 @@ export default function Studio() {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playing, result, count, speed]);
+  }, [playing, result, count, speed, page, modal]);
   useEffect(() => {
     if (position >= count && count > 0) setPlaying(false);
   }, [position, count]);
@@ -127,7 +127,7 @@ export default function Studio() {
         setRun(e.data.run);
         setSelected(2);
         setBusy(false);
-        setPlaying(true);
+        setPlaying(e.data.run.results[2].steps.length > 0);
         w.terminate();
       }
       if (e.data.type === "error") {
@@ -174,6 +174,14 @@ export default function Studio() {
     }
   }
   const materialIndex = modal === "material1" ? 1 : 0;
+  function saveFigure() {
+    const canvas = document.querySelector<HTMLCanvasElement>(".scene canvas");
+    if (!canvas) return;
+    const a = document.createElement("a");
+    a.download = "infilllab-preview.png";
+    a.href = canvas.toDataURL("image/png");
+    a.click();
+  }
   return (
     <div className="studio-app">
       <header className="studio-header">
@@ -723,6 +731,10 @@ export default function Studio() {
                         : "Single-material routing; transition waste is not applicable."}
                     </p>
                     <div className="result-footer">
+                      <button onClick={saveFigure}>
+                        <Download size={14} />
+                        Save image
+                      </button>
                       <span>
                         {result.algorithm} · seed {config.seed}
                       </span>
@@ -762,6 +774,11 @@ export default function Studio() {
         </main>
       )}
       <dialog
+        aria-label={
+          modal === "settings"
+            ? "Advanced experiment settings"
+            : "Choose material and colour"
+        }
         ref={dialog}
         className="settings-dialog"
         onCancel={() => setModal(null)}
@@ -798,6 +815,12 @@ export default function Studio() {
                 config={draft}
                 update={(p) => setDraft((c) => ({ ...c, ...p }))}
               />
+              <button
+                className="reset-settings"
+                onClick={() => setDraft({ ...initial })}
+              >
+                Reset to starter sample
+              </button>
               <details className="verification-option">
                 <summary>Reference case</summary>
                 <p>
@@ -847,10 +870,22 @@ export default function Studio() {
                   </button>
                 ))}
               </div>
-              {!materials.slice(0,5).includes(materialIndex ? draft.materialB : draft.materialA) && (
+              {!materials
+                .slice(0, 5)
+                .includes(
+                  materialIndex ? draft.materialB : draft.materialA,
+                ) && (
                 <label className="custom-label">
                   Material label
                   <input
+                    defaultValue={
+                      (materialIndex ? draft.materialB : draft.materialA) ===
+                      "Custom"
+                        ? ""
+                        : materialIndex
+                          ? draft.materialB
+                          : draft.materialA
+                    }
                     maxLength={40}
                     placeholder="Custom"
                     onChange={(e) =>
