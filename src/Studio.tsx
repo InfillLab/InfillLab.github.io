@@ -1,86 +1,122 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Play,
   Pause,
-  Plus,
   Settings2,
   X,
   ArrowRight,
   Download,
   RotateCcw,
-  Layers,
-  ChevronDown,
+  Plus,
 } from "lucide-react";
 import { DEFAULT, BENCHMARK, type Config, type Run } from "./model/types";
-import { geometry, validateConfig, parseConfig } from "./model/engine";
-import { Controls, NumberField } from "./components/Controls";
-import { PrintScene } from "./components/PrintScene";
+import { geometry, validateConfig, bounds, parseConfig } from "./model/engine";
+import {
+  PATTERNS,
+  nativePaths,
+  slicePath,
+  pathLength,
+  type Pattern,
+} from "./model/patterns";
+import { increments, accounting } from "./model/timeline";
+import { download, summaryCSV, exportSVG } from "./io";
 import Methods from "./components/Methods";
-import { download, summaryCSV } from "./io";
 import "./studio.css";
-const materials = ["PLA", "PETG", "TPU", "ABS", "Nylon", "Custom"];
-const swatches = [
-  "#be6944",
-  "#71824e",
-  "#b69b5b",
-  "#755775",
-  "#4b7773",
-  "#424842",
-  "#c5bda8",
-];
 const initial: Config = {
   ...DEFAULT,
-  mode: "single",
   materialA: "PLA",
   materialB: "TPU",
-  layers: 3,
-  acceptance: "uniform",
-  eligibleLow: 0,
-  eligibleHigh: 1,
-  transitionVolume: 150,
+  iterations: 80,
+  replicates: 3,
 };
-const fmt = (n: number, d = 1) =>
-  n.toLocaleString("en-GB", {
-    maximumFractionDigits: d,
-    minimumFractionDigits: d,
-  });
+const fmt = (v: number, n = 1) => v.toFixed(n);
+function Preview({ pattern }: { pattern: Pattern }) {
+  const paths = nativePaths({ ...DEFAULT, pattern });
+  return (
+    <svg viewBox="-2 -2 44 22" aria-hidden="true">
+      {paths.map((p, i) => (
+        <polyline
+          key={i}
+          points={p.points.map((p) => `${p.x},${p.y}`).join(" ")}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth=".35"
+        />
+      ))}
+    </svg>
+  );
+}
+const blend = (a: string, b: string, t: number) => {
+  const rgb = (s: string) =>
+    [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
+  return `rgb(${rgb(a)
+    .map((x, i) => Math.round(x + (rgb(b)[i] - x) * t))
+    .join(",")})`;
+};
 export default function Studio() {
-  const [config, setConfig] = useState<Config>(initial),
+  const [config, setConfig] = useState(initial),
     [colors, setColors] = useState<[string, string]>(["#be6944", "#71824e"]);
+  const [page, setPage] = useState("workspace"),
+    [modal, setModal] = useState<string | null>(null),
+    [draft, setDraft] = useState(initial);
   const [run, setRun] = useState<Run | null>(null),
+    [matrix, setMatrix] = useState<Run[]>([]),
     [selected, setSelected] = useState(2),
     [busy, setBusy] = useState(false),
-    [percent, setPercent] = useState(0),
+    [progress, setProgress] = useState(0),
     [error, setError] = useState("");
-  const [modal, setModal] = useState<
-      "material0" | "material1" | "settings" | null
-    >(null),
-    [draft, setDraft] = useState(initial),
-    [draftColors, setDraftColors] = useState(colors);
-  const [page, setPage] = useState<"studio" | "methods" | "compare">("studio"),
-    [position, setPosition] = useState(0),
+  const [position, setPosition] = useState(0),
     [playing, setPlaying] = useState(false),
     [speed, setSpeed] = useState(1),
-    [flat, setFlat] = useState(false);
+    [diagnostic, setDiagnostic] = useState(false),
+    [travels, setTravels] = useState(false);
   const worker = useRef<Worker | null>(null),
     dialog = useRef<HTMLDialogElement>(null),
     file = useRef<HTMLInputElement>(null);
-  const errors = validateConfig(config),
-    segments = run?.segments ?? (errors.length ? [] : geometry(config)),
-    result = run?.results[selected],
-    count = result?.steps.length ?? 0;
+  const issues = validateConfig(config),
+    c = run?.config ?? config;
+  const segments = useMemo(
+    () => (issues.length ? [] : (run?.segments ?? geometry(config))),
+    [config, run, issues.join()],
+  );
+  const result = run?.results[selected];
+  const items = useMemo(
+    () => (run && result ? increments(run, result) : []),
+    [run, result],
+  );
+  const multi = c.mode === "multi",
+    lead = multi ? 14 : 0,
+    total = items.length + lead * 2,
+    transitionPosition = Math.max(0, Math.min(items.length, position - lead));
+  const bound = segments.length ? bounds(c, segments) : null,
+    live = accounting(
+      items,
+      transitionPosition,
+      multi ? c.transitionVolume : bound?.capacity || 1,
+    );
+  const phase = !run
+    ? "Ready"
+    : !multi
+      ? "Single material"
+      : position < lead
+        ? "Pure material " + (c.direction === "AB" ? "A" : "B")
+        : position < lead + items.length
+          ? "Transition interval"
+          : "Pure material " + (c.direction === "AB" ? "B" : "A");
+  const pattern = PATTERNS.find((p) => p.id === config.pattern)!;
   const patch = (p: Partial<Config>) => {
     worker.current?.terminate();
     setBusy(false);
-    setConfig((c) => ({ ...c, ...p }));
+    setConfig((v) => ({ ...v, ...p }));
     setRun(null);
-    setPosition(0);
+    setMatrix([]);
     setPlaying(false);
+    setPosition(0);
+    setDiagnostic(false);
     setError("");
   };
-  const open = (m: typeof modal) => {
+  const open = (m: string) => {
     setDraft({ ...config });
-    setDraftColors([...colors]);
     setModal(m);
   };
   useEffect(() => {
@@ -89,32 +125,30 @@ export default function Studio() {
   }, [modal]);
   useEffect(() => () => worker.current?.terminate(), []);
   useEffect(() => {
-    if (!playing || !result || page !== "studio" || modal) return;
+    if (!playing || !run || page !== "workspace" || modal) return;
     let last = performance.now(),
-      frame = 0;
+      id = 0;
     const tick = (now: number) => {
-      const delta = Math.min(now - last, 100);
+      setPosition((v) =>
+        Math.min(total, v + (Math.min(100, now - last) / 1000) * speed * 22),
+      );
       last = now;
-      setPosition((p) => Math.min(count, p + (delta / 1000) * speed * 1.25));
-      frame = requestAnimationFrame(tick);
+      id = requestAnimationFrame(tick);
     };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [playing, result, count, speed, page, modal]);
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [playing, run, page, modal, total, speed]);
   useEffect(() => {
-    if (position >= count && count > 0) setPlaying(false);
-  }, [position, count]);
-  function launch(c = config) {
-    const issues = validateConfig(c);
+    if (position >= total) setPlaying(false);
+  }, [position, total]);
+  function launch(all = false) {
     if (issues.length) {
       setError(issues.join(" "));
       return;
     }
     worker.current?.terminate();
     setBusy(true);
-    setPercent(0);
-    setRun(null);
-    setPosition(0);
+    setProgress(0);
     setPlaying(false);
     setError("");
     const w = new Worker(new URL("./model/worker.ts", import.meta.url), {
@@ -122,866 +156,1147 @@ export default function Studio() {
     });
     worker.current = w;
     w.onmessage = (e) => {
-      if (e.data.type === "progress") setPercent(e.data.fraction);
-      if (e.data.type === "result") {
-        setRun(e.data.run);
-        setSelected(2);
-        setBusy(false);
-        setPlaying(e.data.run.results[2].steps.length > 0);
-        w.terminate();
+      const v = e.data;
+      if (v.type === "progress") {
+        setProgress(v.fraction);
+        return;
       }
-      if (e.data.type === "error") {
-        setError(e.data.message);
-        setBusy(false);
-        w.terminate();
+      setBusy(false);
+      w.terminate();
+      if (v.type === "error") setError(v.message);
+      else if (v.type === "matrix") setMatrix(v.runs);
+      else {
+        setRun(v.run);
+        setPosition(0);
+        setSelected(2);
+        setDiagnostic(false);
+        setPlaying(true);
       }
     };
     w.onerror = () => {
-      setError("Calculation could not complete. Please retry.");
+      setError("Calculation interrupted. Check settings and run again.");
       setBusy(false);
       w.terminate();
     };
-    w.postMessage(c);
+    w.postMessage({ config, matrix: all });
   }
-  function save() {
-    const issues = validateConfig(draft);
-    if (issues.length) return;
-    patch(draft);
-    setColors(draftColors);
-    setModal(null);
-  }
-  async function importRun(f?: File) {
-    if (!f) return;
-    try {
-      if (f.size > 2000000) throw new Error("Choose a file below 2 MB.");
-      const data = JSON.parse(await f.text());
-      const c = parseConfig(data);
-      patch(c);
-      if (
-        Array.isArray(data.presentation?.colors) &&
-        data.presentation.colors.length === 2 &&
-        data.presentation.colors.every(
-          (v: unknown) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v),
-        )
-      )
-        setColors(data.presentation.colors);
-      setPage("studio");
-      launch(c);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Invalid file.");
-    } finally {
-      if (file.current) file.current.value = "";
-    }
-  }
-  const materialIndex = modal === "material1" ? 1 : 0;
-  function saveFigure() {
-    const canvas = document.querySelector<HTMLCanvasElement>(".scene canvas");
-    if (!canvas) return;
-    const a = document.createElement("a");
-    a.download = "infilllab-preview.png";
-    a.href = canvas.toDataURL("image/png");
-    a.click();
-  }
+  const number = (
+    key: keyof Config,
+    label: string,
+    min: number,
+    max: number,
+    step = 1,
+  ) => (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={
+          Number.isFinite(draft[key] as number) ? (draft[key] as number) : ""
+        }
+        onChange={(e) =>
+          setDraft((v) => ({
+            ...v,
+            [key]: e.target.value === "" ? NaN : Number(e.target.value),
+          }))
+        }
+      />
+    </label>
+  );
+  const active =
+    items[Math.min(items.length - 1, Math.floor(transitionPosition))];
+  const currentPoint = active?.used
+    ? slicePath(
+        active.points,
+        0,
+        pathLength(active.points) * (transitionPosition % 1),
+      ).at(-1)
+    : undefined;
+  const changeResult = (i: number) => {
+    setSelected(i);
+    setPosition(0);
+    setPlaying(false);
+    setDiagnostic(false);
+  };
   return (
-    <div className="studio-app">
-      <header className="studio-header">
+    <div className="app">
+      <header className="header">
         <a
-          className="studio-brand"
+          className="brand"
           href="#"
           onClick={(e) => {
             e.preventDefault();
-            setPage("studio");
+            setPage("workspace");
           }}
         >
-          <span className="brand-mark">▱</span>InfillLab
-          <span className="brand-caption">PRINT PATH EXPLORER</span>
+          <span className="brand-mark">≋</span>InfillLab
+          <span className="version">2.0</span>
         </a>
-        <nav>
-          <button
-            className={page === "studio" ? "active" : ""}
-            onClick={() => setPage("studio")}
-          >
-            Workspace
-          </button>
-          <button
-            className={page === "compare" ? "active" : ""}
-            onClick={() => setPage("compare")}
-          >
-            Compare
-          </button>
-          <button
-            className={page === "methods" ? "active" : ""}
-            onClick={() => setPage("methods")}
-          >
-            Methods
-          </button>
+        <nav aria-label="Main navigation">
+          {["workspace", "compare", "methods"].map((p) => (
+            <button
+              key={p}
+              className={page === p ? "active" : ""}
+              onClick={() => setPage(p)}
+            >
+              {p[0].toUpperCase() + p.slice(1)}
+            </button>
+          ))}
         </nav>
-        <button className="subtle" onClick={() => file.current?.click()}>
-          Open experiment
-        </button>
-        <input
-          ref={file}
-          type="file"
-          accept=".json"
-          hidden
-          onChange={(e) => importRun(e.target.files?.[0])}
-        />
+        <span className="header-note">COMPUTATIONAL RESEARCH STUDIO</span>
       </header>
-      {error && (
-        <div className="studio-error" role="alert">
-          {error}
-          <button onClick={() => setError("")} aria-label="Dismiss error">
-            <X size={16} />
-          </button>
-        </div>
-      )}
-      {page === "methods" ? (
-        <>
-          <div className="single-note">
-            Single material mode compares paths with unrestricted material
-            availability and zero transition waste. Polymer selections identify
-            the experiment; they do not load measured mechanical properties.
-          </div>
+      <main>
+        {page === "methods" ? (
           <Methods />
-        </>
-      ) : page === "compare" ? (
-        <div className="comparison-page">
-          <p className="kicker">RESULTS</p>
-          <h1>Compare the same print.</h1>
-          <p>
-            Check completion before comparing travel. Shorter incomplete routes
-            are not faster completed prints.
-          </p>
-          {run ? (
-            <>
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Method</th>
-                      <th>Tracks</th>
-                      <th>Travel</th>
-                      <th>
-                        {run.config.mode === "single" ? "Deposited" : "Reused"}
-                      </th>
-                      <th>Transition waste</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {run.results.map((r, i) => (
-                      <tr key={r.algorithm}>
-                        <th>
-                          <button
-                            onClick={() => {
-                              setSelected(i);
-                              setPosition(0);
-                              setPlaying(true);
-                              setPage("studio");
-                            }}
-                          >
-                            {r.algorithm} ↗
-                          </button>
-                        </th>
-                        <td>
-                          {r.steps.length}/{run.segments.length}
-                        </td>
-                        <td>{fmt(r.travel)} mm</td>
-                        <td>{fmt(r.used)} mm³</td>
-                        <td>
-                          {run.config.mode === "single"
-                            ? "Not applicable"
-                            : `${fmt(r.discarded)} mm³`}
-                        </td>
-                        <td>{r.complete ? "Complete" : "Partial"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+        ) : page === "compare" ? (
+          <section className="comparison">
+            <div className="section-heading">
+              <div>
+                <div className="eyebrow">CONTROLLED COMPARISON</div>
+                <h1>Nine references. One proposal.</h1>
+                <p>
+                  Compare reference order and adaptive scheduling on each
+                  pattern under the same input assumptions.
+                </p>
               </div>
-              <p className="comparison-note">
-                Adaptive search: {run.replicates.length} seeds, beginning with{" "}
-                {run.config.seed}. The displayed result uses the first seed.
-                Modelled values, not printer measurements.
-              </p>
-              <div className="export-actions">
-                <button
-                  onClick={() =>
-                    download(
-                      "infilllab-results.csv",
-                      summaryCSV(run),
-                      "text/csv",
-                    )
-                  }
-                >
-                  Download CSV
-                </button>
-                <button
-                  onClick={() =>
-                    download(
-                      "infilllab-experiment.json",
-                      JSON.stringify(
-                        { ...run, presentation: { colors } },
-                        null,
-                        2,
-                      ),
-                      "application/json",
-                    )
-                  }
-                >
-                  Save experiment JSON
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="comparison-empty">
-              <Layers size={38} />
-              <h2>Your results will appear here.</h2>
               <button
-                className="start-button"
-                onClick={() => setPage("studio")}
+                className="primary"
+                disabled={
+                  busy || !!issues.length || config.preset === "benchmark"
+                }
+                onClick={() => launch(true)}
               >
-                Set up a print <ArrowRight size={17} />
+                {busy
+                  ? `Calculating ${Math.round(progress * 100)}%`
+                  : "Compare all 10 patterns"}
               </button>
             </div>
-          )}
-        </div>
-      ) : (
-        <main className="studio-main">
-          <div className="studio-intro">
-            <div>
-              <p className="kicker">YOUR EXPERIMENT</p>
-              <h1>Set it up. Watch it print.</h1>
-              <p>
-                Choose a material and an infill pattern. Explore the path, layer
-                by layer.
-              </p>
+            <div className="notice">
+              {config.capacityMode === "equal"
+                ? "Equal nominal volume: each native path is trimmed proportionally to the smallest catalogue capacity. These are budget-controlled variants, not full slicer patterns."
+                : "Native geometry: capacities differ. Compare utilisation and coverage alongside absolute volumes."}{" "}
+              Single layer,{" "}
+              {config.mode === "multi" ? "shared melt path" : "single material"}
+              , {config.replicates} seeds per pattern. Material names are
+              labels.
             </div>
-            <span className="research-tag">Geometric simulation</span>
-          </div>
-          <div className="studio-layout">
-            <aside className="setup-card">
-              <section>
-                <div className="section-title">
-                  <span>01</span>
-                  <h2>Choose materials</h2>
+            {config.preset === "benchmark" && (
+              <p>
+                Return to Workspace and choose Pattern study to compare the
+                catalogue.
+              </p>
+            )}
+            {matrix.length > 0 ? (
+              <>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Pattern</th>
+                        <th>Capacity mm³</th>
+                        <th>Reference use mm³</th>
+                        <th>Adaptive use mm³</th>
+                        <th>Coverage</th>
+                        <th>Travel mm</th>
+                        <th>Seed range mm³</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matrix.map((r) => {
+                        const a = r.results[2];
+                        return (
+                          <tr key={r.config.pattern}>
+                            <th>
+                              {
+                                PATTERNS.find((p) => p.id === r.config.pattern)
+                                  ?.name
+                              }
+                            </th>
+                            <td>
+                              {fmt(bounds(r.config, r.segments).capacity)}
+                            </td>
+                            <td>{fmt(r.results[0].used)}</td>
+                            <td>{fmt(a.used)}</td>
+                            <td>{fmt(a.coverage * 100)}%</td>
+                            <td>{fmt(a.travel)}</td>
+                            <td>
+                              {fmt(
+                                Math.min(...r.replicates.map((v) => v.used)),
+                              )}{" "}
+                              -{" "}
+                              {fmt(
+                                Math.max(...r.replicates.map((v) => v.used)),
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-                <button
-                  className="material-card"
-                  onClick={() => open("material0")}
-                >
-                  <span
-                    className="spool"
-                    style={{ "--filament": colors[0] } as React.CSSProperties}
-                  />
-                  <span>
-                    <small>MATERIAL 1</small>
-                    <strong>{config.materialA}</strong>
-                    <em>Choose material & colour</em>
-                  </span>
-                  <Settings2 size={17} />
-                </button>
-                {config.mode === "multi" ? (
+                <div className="actions">
                   <button
-                    className="material-card"
-                    onClick={() => open("material1")}
+                    onClick={() =>
+                      download(
+                        "infilllab-pattern-comparison.json",
+                        JSON.stringify(
+                          {
+                            schema: "infilllab-matrix/2",
+                            colors,
+                            runs: matrix,
+                          },
+                          null,
+                          2,
+                        ),
+                        "application/json",
+                      )
+                    }
                   >
-                    <span
-                      className="spool"
-                      style={{ "--filament": colors[1] } as React.CSSProperties}
-                    />
-                    <span>
-                      <small>MATERIAL 2</small>
-                      <strong>{config.materialB}</strong>
-                      <em>Choose material & colour</em>
-                    </span>
-                    <Settings2 size={17} />
+                    <Download size={16} /> Full comparison JSON
                   </button>
-                ) : (
                   <button
-                    className="add-material"
-                    onClick={() => {
-                      setDraft({ ...config, mode: "multi" });
-                      setDraftColors(colors);
-                      setModal("material1");
-                    }}
+                    onClick={() =>
+                      download(
+                        "infilllab-pattern-comparison.csv",
+                        matrix
+                          .map(
+                            (r, i) =>
+                              (i ? "" : "pattern,") +
+                              summaryCSV(r)
+                                .split("\r\n")
+                                .filter((_, j) => !i || j > 0)
+                                .map((line, j) =>
+                                  !i && j === 0
+                                    ? line
+                                    : `${r.config.pattern},${line}`,
+                                )
+                                .join("\r\n"),
+                          )
+                          .join("\r\n"),
+                        "text/csv",
+                      )
+                    }
                   >
-                    <Plus size={17} />
-                    Add a second material
+                    CSV
                   </button>
-                )}
-                <p className="setup-hint">
-                  {config.mode === "single"
-                    ? "One material. Explore infill and travel."
-                    : "Two materials. Explore transition reuse."}
+                </div>
+                <p className="muted">
+                  Displayed adaptive result uses the first seed, not the best
+                  seed. Empty receiver segments are not completed with pure
+                  material in this transition-only study. No mechanical strength
+                  ranking is implied.
                 </p>
-              </section>
-              <section>
-                <div className="section-title">
-                  <span>02</span>
-                  <h2>Build your sample</h2>
-                </div>
-                <div className="pattern-options">
-                  {(["parallel", "chevron", "ribs"] as const).map((p, i) => (
-                    <button
-                      disabled={config.preset === "benchmark"}
-                      key={p}
-                      className={config.pattern === p ? "chosen" : ""}
-                      onClick={() =>
-                        patch({
-                          pattern: p,
-                          spacing: Math.max(
-                            config.spacing,
-                            p === "chevron"
-                              ? 2 * config.beadWidth
-                              : config.beadWidth,
-                          ),
-                        })
-                      }
-                    >
-                      <svg viewBox="0 0 62 42" aria-hidden="true">
-                        {[0, 1, 2, 3].map((j) => (
-                          <path
-                            key={j}
-                            d={
-                              i === 1
-                                ? `M7 ${9 + j * 8}L31 ${4 + j * 8}L55 ${9 + j * 8}`
-                                : i === 2
-                                  ? `M${j % 2 ? 24 : 7} ${8 + j * 8}H${j % 2 ? 55 : 38}`
-                                  : `M7 ${8 + j * 8}H55`
-                            }
-                          />
-                        ))}
-                      </svg>
-                      <span>{["Lines", "Chevron", "Ribs"][i]}</span>
-                    </button>
+              </>
+            ) : (
+              <div className="empty">
+                <h2>A reproducible comparison</h2>
+                <p>
+                  Set your materials and geometry in Workspace, then run the
+                  catalogue here. Each pattern receives the same search budget
+                  and seeds.
+                </p>
+                <div className="mini-catalogue">
+                  {PATTERNS.map((p) => (
+                    <div key={p.id}>
+                      <Preview pattern={p.id} />
+                      <span>{p.name}</span>
+                    </div>
                   ))}
                 </div>
-                <div className="simple-fields">
+              </div>
+            )}
+          </section>
+        ) : (
+          <div className="workspace">
+            <aside className="setup">
+              <div className="eyebrow">01 / DEFINE THE EXPERIMENT</div>
+              <h1>Material to motion.</h1>
+              <p className="muted">
+                Explore where transition material can go, and when it can get
+                there.
+              </p>
+              <div className="segmented">
+                <button
+                  className={config.preset === "interface" ? "active" : ""}
+                  onClick={() =>
+                    patch({
+                      ...initial,
+                      materialA: config.materialA,
+                      materialB: config.materialB,
+                    })
+                  }
+                >
+                  Pattern study
+                </button>
+                <button
+                  className={config.preset === "benchmark" ? "active" : ""}
+                  onClick={() =>
+                    patch({
+                      ...BENCHMARK,
+                      materialA: config.materialA,
+                      materialB: config.materialB,
+                    })
+                  }
+                >
+                  14.14 mm example
+                </button>
+              </div>
+              <h3>Materials</h3>
+              {[0, ...(multi ? [1] : [])].map((i) => (
+                <button
+                  className="material-card"
+                  key={i}
+                  onClick={() => open("material" + i)}
+                >
+                  <span className="spool" style={{ color: colors[i] }}>
+                    ◉
+                  </span>
+                  <span>
+                    <small>MATERIAL {i ? "B" : "A"}</small>
+                    <strong>{i ? config.materialB : config.materialA}</strong>
+                  </span>
+                  <Settings2 size={16} />
+                </button>
+              ))}
+              {config.preset !== "benchmark" && (
+                <button
+                  className="text-button"
+                  onClick={() => patch({ mode: multi ? "single" : "multi" })}
+                >
+                  {multi ? (
+                    "Use one material"
+                  ) : (
+                    <>
+                      <Plus size={15} /> Add second material
+                    </>
+                  )}
+                </button>
+              )}
+              <div className="architecture">
+                {multi
+                  ? "Shared melt path · one receiving layer"
+                  : "Single material · one layer"}
+              </div>
+              <h3>Receiving pattern</h3>
+              <button
+                disabled={config.preset === "benchmark"}
+                className="pattern-card"
+                onClick={() => open("patterns")}
+              >
+                <Preview pattern={config.pattern} />
+                <span>
+                  <strong>
+                    {config.preset === "benchmark"
+                      ? "Two analytical segments"
+                      : pattern.name}
+                  </strong>
+                  <small>
+                    {config.preset === "benchmark"
+                      ? "Analytical benchmark"
+                      : config.pattern === "taii"
+                        ? "Experimental proposal"
+                        : "Reference family"}
+                  </small>
+                </span>
+                <ArrowRight size={18} />
+              </button>
+              <p className="small">
+                {config.preset === "benchmark"
+                  ? "Fixed segment windows isolate the scheduling constraint."
+                  : pattern.note}
+              </p>
+              <button
+                className="settings-button"
+                onClick={() => open("settings")}
+              >
+                <Settings2 size={17} />
+                {fmt(config.width, 0)} × {fmt(config.height, 0)} mm · Experiment
+                settings
+              </button>
+              <button
+                className="primary run-button"
+                disabled={busy || !!issues.length}
+                onClick={() => launch()}
+              >
+                <Play size={17} />
+                {busy
+                  ? `Computing ${Math.round(progress * 100)}%`
+                  : "Generate & simulate"}
+              </button>
+              {busy && (
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    worker.current?.terminate();
+                    setBusy(false);
+                  }}
+                >
+                  Cancel calculation
+                </button>
+              )}
+              <div className="import-export">
+                <button onClick={() => file.current?.click()}>
+                  Import experiment
+                </button>
+                <button
+                  onClick={() => {
+                    patch(initial);
+                    setColors(["#be6944", "#71824e"]);
+                  }}
+                >
+                  Reset
+                </button>
+              </div>
+              <input
+                ref={file}
+                hidden
+                type="file"
+                accept=".json"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  try {
+                    const v = JSON.parse(await f.text());
+                    patch(parseConfig(v));
+                    if (
+                      Array.isArray(v.colors) &&
+                      v.colors.length === 2 &&
+                      v.colors.every(
+                        (x: unknown) =>
+                          typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x),
+                      )
+                    )
+                      setColors(v.colors);
+                  } catch (err) {
+                    setError(String(err));
+                  }
+                  e.target.value = "";
+                }}
+              />
+            </aside>
+            <section className="experiment">
+              <div className="section-heading">
+                <div>
+                  <div className="eyebrow">02 / FOLLOW THE EXTRUSION</div>
+                  <h2>
+                    {config.preset === "benchmark"
+                      ? "Shorter is not always feasible"
+                      : pattern.name}
+                  </h2>
+                </div>
+                <span className="status">
+                  {busy
+                    ? "Calculating"
+                    : run
+                      ? "Simulation ready"
+                      : "Geometry preview"}
+                </span>
+              </div>
+              <div className="scene-toolbar">
+                {run ? (
+                  <select
+                    aria-label="Scheduling method"
+                    value={selected}
+                    onChange={(e) => changeResult(Number(e.target.value))}
+                  >
+                    {run.results.map((r, i) => (
+                      <option key={r.algorithm} value={i}>
+                        {r.algorithm}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span>Generate a schedule to start</span>
+                )}
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={travels}
+                    onChange={(e) => setTravels(e.target.checked)}
+                  />{" "}
+                  Travel moves
+                </label>
+                {config.preset === "benchmark" && (
                   <label>
-                    Sample size
-                    <select
-                      disabled={config.preset === "benchmark"}
-                      value={
-                        config.width === 40 && config.height === 18
-                          ? "small"
-                          : config.width === 60 && config.height === 30
-                            ? "medium"
-                            : "custom"
-                      }
+                    <input
+                      type="checkbox"
+                      checked={diagnostic}
                       onChange={(e) => {
-                        if (e.target.value === "custom") open("settings");
-                        else
-                          patch(
-                            e.target.value === "small"
-                              ? { width: 40, height: 18 }
-                              : { width: 60, height: 30 },
-                          );
+                        setDiagnostic(e.target.checked);
+                        setPlaying(false);
+                      }}
+                    />{" "}
+                    Show invalid shortcut
+                  </label>
+                )}
+              </div>
+              <div className="scene">
+                <div className="scene-label">
+                  <span className={playing ? "pulse" : ""} />{" "}
+                  {diagnostic ? "REJECTED SCHEDULE" : phase.toUpperCase()}
+                </div>
+                <svg
+                  id="toolpath-figure"
+                  role="img"
+                  aria-label="Two dimensional receiving paths and extrusion animation"
+                  viewBox={`-8 -10 ${c.width + 16} ${c.height + 22}`}
+                >
+                  <defs>
+                    <pattern
+                      id="grid"
+                      width="5"
+                      height="5"
+                      patternUnits="userSpaceOnUse"
+                    >
+                      <path
+                        d="M5 0H0V5"
+                        fill="none"
+                        stroke="#e4e4da"
+                        strokeWidth=".08"
+                      />
+                    </pattern>
+                  </defs>
+                  <rect
+                    x="0"
+                    y="0"
+                    width={c.width}
+                    height={c.height}
+                    fill="url(#grid)"
+                    stroke="#bfc3b3"
+                    strokeWidth=".15"
+                  />
+                  {segments.map((s) => (
+                    <polyline
+                      key={s.id}
+                      points={s.points
+                        .map((p) => `${p.x},${c.height - p.y}`)
+                        .join(" ")}
+                      fill="none"
+                      stroke={diagnostic ? "#b34435" : "#cbd0c3"}
+                      strokeWidth={c.beadWidth}
+                      opacity={diagnostic ? 1 : 0.65}
+                    />
+                  ))}
+                  {multi && !diagnostic && (
+                    <>
+                      <path
+                        d={`M0 ${c.height + 4}H${c.width * Math.min(1, position / lead)}`}
+                        stroke={colors[c.direction === "AB" ? 0 : 1]}
+                        strokeWidth={c.beadWidth}
+                      />
+                      <path
+                        d={`M0 -4H${c.width * Math.max(0, Math.min(1, (position - lead - items.length) / lead))}`}
+                        stroke={colors[c.direction === "AB" ? 1 : 0]}
+                        strokeWidth={c.beadWidth}
+                      />
+                    </>
+                  )}
+                  {!diagnostic &&
+                    items.map((v, i) => {
+                      if (i >= transitionPosition || !v.used) return null;
+                      return (
+                        <polyline
+                          key={i}
+                          points={slicePath(
+                            v.points,
+                            0,
+                            pathLength(v.points) *
+                              Math.min(1, transitionPosition - i),
+                          )
+                            .map((p) => `${p.x},${c.height - p.y}`)
+                            .join(" ")}
+                          fill="none"
+                          stroke={blend(colors[0], colors[1], v.c)}
+                          strokeWidth={c.beadWidth}
+                          opacity={1}
+                          strokeLinecap="round"
+                        />
+                      );
+                    })}
+                  {travels &&
+                    !diagnostic &&
+                    result?.steps
+                      .filter((s) => s.start <= (active?.start ?? 0))
+                      .map((s, i) => (
+                        <line
+                          key={i}
+                          x1={s.travelFrom.x}
+                          y1={c.height - s.travelFrom.y}
+                          x2={s.travelTo.x}
+                          y2={c.height - s.travelTo.y}
+                          stroke="#756d60"
+                          strokeWidth=".1"
+                          strokeDasharray=".7 .5"
+                        />
+                      ))}
+                  {diagnostic && (
+                    <>
+                      <line
+                        x1="60"
+                        y1="0"
+                        x2="70"
+                        y2="10"
+                        stroke="#b34435"
+                        strokeWidth=".25"
+                        strokeDasharray="1 .6"
+                      />
+                      <text x="28" y="-2" fontSize="2.2" fill="#a53629">
+                        B first: c = 0 to 0.5 is rejected
+                      </text>
+                      <text x="28" y="14" fontSize="2.2" fill="#a53629">
+                        A second: c = 0.5 to 1 is rejected
+                      </text>
+                    </>
+                  )}
+                  {!diagnostic &&
+                    playing &&
+                    currentPoint &&
+                    position >= lead &&
+                    position < lead + items.length && (
+                      <circle
+                        cx={currentPoint.x}
+                        cy={c.height - currentPoint.y}
+                        r=".9"
+                        fill="#30372c"
+                        stroke="white"
+                        strokeWidth=".25"
+                      />
+                    )}
+                  <text x="0" y={c.height + 8} fontSize="1.7" fill="#777d70">
+                    {c.width} mm · top view · nominal centreline geometry
+                  </text>
+                </svg>
+                <div className="scene-footer">
+                  <span>
+                    <i style={{ background: colors[0] }} /> {config.materialA}
+                  </span>
+                  {multi && (
+                    <span>
+                      <i style={{ background: colors[1] }} /> {config.materialB}
+                    </span>
+                  )}
+                  <span>
+                    <i style={{ background: "#cbd0c3" }} /> Unfilled receiver
+                  </span>
+                </div>
+              </div>
+              {diagnostic ? (
+                <div className="notice danger">
+                  <strong>14.14 mm travel · infeasible</strong>
+                  <p>
+                    The B-first shortcut violates both composition windows.
+                    These are attempted deposits, not accepted allocations. The
+                    complete feasible A-first route requires 28.28 mm.
+                    Inter-segment purging is disabled in this analytical
+                    example.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="playback">
+                    <button
+                      aria-label={
+                        playing ? "Pause animation" : "Play animation"
+                      }
+                      disabled={!run}
+                      onClick={() => {
+                        if (position >= total) setPosition(0);
+                        setPlaying(!playing);
                       }}
                     >
-                      <option value="small">Small · 40 × 18 mm</option>
-                      <option value="medium">Medium · 60 × 30 mm</option>
-                      <option value="custom">Custom dimensions</option>
-                    </select>
-                  </label>
-                  <label>
-                    Line spacing
-                    <select
-                      disabled={config.preset === "benchmark"}
-                      value={
-                        [1, 2, 4].includes(config.spacing)
-                          ? config.spacing
-                          : "custom"
-                      }
-                      onChange={(e) =>
-                        e.target.value === "custom"
-                          ? open("settings")
-                          : patch({ spacing: Number(e.target.value) })
-                      }
+                      {playing ? <Pause size={18} /> : <Play size={18} />}
+                    </button>
+                    <button
+                      aria-label="Restart animation"
+                      disabled={!run}
+                      onClick={() => {
+                        setPosition(0);
+                        setPlaying(false);
+                      }}
                     >
-                      <option value="4">Open · 4 mm</option>
-                      <option value="2">Balanced · 2 mm</option>
-                      <option value="1">Dense · 1 mm</option>
-                      <option value="custom">Custom spacing</option>
-                    </select>
-                  </label>
-                  <label>
-                    Layers
+                      <RotateCcw size={16} />
+                    </button>
+                    <input
+                      aria-label="Animation position"
+                      type="range"
+                      min="0"
+                      max={total || 1}
+                      step=".1"
+                      value={position}
+                      disabled={!run}
+                      onChange={(e) => {
+                        setPosition(Number(e.target.value));
+                        setPlaying(false);
+                      }}
+                    />
                     <select
-                      disabled={config.preset === "benchmark"}
-                      value={config.layers}
-                      onChange={(e) => patch({ layers: +e.target.value })}
+                      aria-label="Animation speed"
+                      value={speed}
+                      onChange={(e) => setSpeed(Number(e.target.value))}
                     >
-                      {[1, 2, 3, 4, 5, 6].map((n) => (
-                        <option key={n} value={n}>
-                          {n} {n === 1 ? "layer" : "layers"}
+                      {[0.5, 1, 2, 4].map((s) => (
+                        <option key={s} value={s}>
+                          {s}×
                         </option>
                       ))}
                     </select>
-                  </label>
-                </div>
-              </section>
-              <button
-                className="advanced-button"
-                onClick={() => open("settings")}
-              >
-                <Settings2 size={16} />
-                Advanced settings
-                <ChevronDown size={15} />
-              </button>
-              <div className="start-area">
-                {errors.length > 0 && (
-                  <p role="alert" className="inline-error">
-                    {errors.join(" ")}
-                  </p>
-                )}
-                <button
-                  className="start-button"
-                  disabled={errors.length > 0}
-                  onClick={() =>
-                    busy
-                      ? (worker.current?.terminate(), setBusy(false))
-                      : launch()
-                  }
-                >
-                  {busy ? (
-                    <>Stop calculation · {Math.round(percent * 100)}%</>
-                  ) : (
-                    <>
-                      <Play size={17} />{" "}
-                      {run ? "Run again" : "Start simulation"}
-                    </>
-                  )}
-                </button>
-                <p>Ready to try. No printer connection needed.</p>
-              </div>
-            </aside>
-            <div className="visual-column">
-              <section className="print-card">
-                <div className="print-heading">
-                  <div>
-                    <span
-                      className={`status-dot ${playing ? "pulsing" : ""}`}
-                    />
-                    <strong>
-                      {busy
-                        ? "Calculating route"
-                        : playing
-                          ? "Printing preview"
-                          : run
-                            ? position >= count
-                              ? "Preview complete"
-                              : "Preview paused"
-                            : "Ready to print"}
-                    </strong>
                   </div>
-                  <div className="view-switch">
-                    <button
-                      className={!flat ? "selected" : ""}
-                      onClick={() => setFlat(false)}
-                    >
-                      Perspective
-                    </button>
-                    <button
-                      className={flat ? "selected" : ""}
-                      onClick={() => setFlat(true)}
-                    >
-                      Top
-                    </button>
-                  </div>
-                </div>
-                <PrintScene
-                  config={run?.config ?? config}
-                  segments={segments}
-                  result={result}
-                  progress={position}
-                  colors={colors}
-                  flat={flat}
-                />
-                <div className="scene-materials">
-                  <span>
-                    <i style={{ background: colors[0] }} />
-                    {config.materialA}
-                  </span>
-                  {config.mode === "multi" && (
-                    <>
+                  {multi && (
+                    <div className="phase-strip">
                       <span
-                        className="blend-key"
-                        style={{
-                          background: `linear-gradient(90deg,${colors[0]},${colors[1]})`,
-                        }}
-                      />
-                      <span>
-                        <i style={{ background: colors[1] }} />
-                        {config.materialB}
+                        className={
+                          phase.startsWith("Pure") && position < lead
+                            ? "active"
+                            : ""
+                        }
+                      >
+                        Pure {c.direction === "AB" ? "A" : "B"}
                       </span>
-                    </>
+                      <span
+                        className={
+                          phase === "Transition interval" ? "active" : ""
+                        }
+                      >
+                        Transition · ΔV ≤ {fmt(c.transitionVolume / 180, 3)} mm³
+                      </span>
+                      <span
+                        className={
+                          phase.startsWith("Pure") && position >= lead
+                            ? "active"
+                            : ""
+                        }
+                      >
+                        Pure {c.direction === "AB" ? "B" : "A"}
+                      </span>
+                    </div>
                   )}
-                  <small>Colour represents material, not strength.</small>
-                </div>
-                <div className="transport">
-                  <button
-                    aria-label="Restart preview"
-                    disabled={!result}
-                    onClick={() => {
-                      setPosition(0);
-                      setPlaying(false);
-                    }}
-                  >
-                    <RotateCcw size={16} />
-                  </button>
-                  <button
-                    className="transport-play"
-                    aria-label={playing ? "Pause preview" : "Play preview"}
-                    disabled={!result || count === 0}
-                    onClick={() => {
-                      if (position >= count) setPosition(0);
-                      setPlaying((v) => !v);
-                    }}
-                  >
-                    {playing ? <Pause size={18} /> : <Play size={18} />}
-                  </button>
-                  <input
-                    aria-label="Print progress"
-                    type="range"
-                    min="0"
-                    max={Math.max(1, count)}
-                    step=".01"
-                    value={position}
-                    disabled={!result}
-                    onChange={(e) => {
-                      setPosition(+e.target.value);
-                      setPlaying(false);
-                    }}
-                  />
-                  <span>
-                    {Math.min(Math.floor(position), count)} /{" "}
-                    {count || segments.length}
-                  </span>
-                  <select
-                    aria-label="Animation speed"
-                    value={speed}
-                    onChange={(e) => setSpeed(+e.target.value)}
-                  >
-                    <option value=".5">0.5×</option>
-                    <option value="1">1×</option>
-                    <option value="3">3×</option>
-                  </select>
-                </div>
-              </section>
-              <section className="results-card">
-                <div className="results-heading">
+                  <div className="metrics">
+                    <div>
+                      <small>{multi ? "TRANSITION REUSED" : "DEPOSITED"}</small>
+                      <strong>
+                        {fmt(live.used)} <em>mm³</em>
+                      </strong>
+                    </div>
+                    <div>
+                      <small>EXTERNAL DISCARD</small>
+                      <strong>
+                        {fmt(live.discarded)} <em>mm³</em>
+                      </strong>
+                    </div>
+                    <div>
+                      <small>REMAINING</small>
+                      <strong>
+                        {fmt(live.remaining)} <em>mm³</em>
+                      </strong>
+                    </div>
+                    <div>
+                      <small>{multi ? "UTILISATION η" : "PROGRESS"}</small>
+                      <strong>
+                        {fmt(live.eta * 100)}
+                        <em>%</em>
+                      </strong>
+                    </div>
+                  </div>
+                  <p className="accounting-note">
+                    {multi
+                      ? `η upper bound: ${fmt(((bound?.upperUse ?? 0) / c.transitionVolume) * 100)}% · Avoided discard so far: ${fmt(live.used)} mm³. Pure A/B strokes show context outside this budget.`
+                      : "Single-material mode has no transition blend or purge budget."}{" "}
+                    {run && position >= lead && position < lead + items.length
+                      ? `Current increment: ${active?.used ? "accepted (y = 1)" : "external purge (y = 0)"}, cB = ${fmt(active?.c ?? 0, 3)}.`
+                      : ""}
+                  </p>
+                </>
+              )}
+              <div className="results">
+                <div className="section-heading">
                   <div>
-                    <p className="kicker">03 · RESULTS</p>
+                    <div className="eyebrow">03 / INSPECT THE OUTCOME</div>
                     <h2>
-                      {result ? "Your calculated print" : "See what changes."}
+                      {diagnostic
+                        ? "Feasible schedule results"
+                        : "Schedule results"}
                     </h2>
                   </div>
-                  {result && (
-                    <button onClick={() => setPage("compare")}>
-                      Compare methods <ArrowRight size={16} />
-                    </button>
-                  )}
-                </div>
-                {result ? (
-                  <>
-                    <div className="result-metrics">
-                      <div>
-                        <span>
-                          {config.mode === "single"
-                            ? "Material deposited"
-                            : "Transition reused"}
-                        </span>
-                        <strong>
-                          {fmt(result.used)}
-                          <small> mm³</small>
-                        </strong>
-                      </div>
-                      <div>
-                        <span>Travel without printing</span>
-                        <strong>
-                          {fmt(result.travel)}
-                          <small> mm</small>
-                        </strong>
-                      </div>
-                      <div>
-                        <span>
-                          {config.mode === "single"
-                            ? "Tracks completed"
-                            : "Transition waste"}
-                        </span>
-                        <strong>
-                          {config.mode === "single"
-                            ? `${result.steps.length}/${segments.length}`
-                            : fmt(result.discarded)}
-                          <small>{config.mode === "multi" ? " mm³" : ""}</small>
-                        </strong>
-                      </div>
-                    </div>
-                    <p
-                      className={
-                        result.complete ? "result-note" : "result-note partial"
-                      }
-                    >
-                      {result.complete
-                        ? "All tracks allocated."
-                        : `${result.unassigned.length} tracks could not be allocated within this transition.`}{" "}
-                      {config.mode === "multi"
-                        ? "Transition behaviour is assumed, not calibrated for this material pair."
-                        : "Single-material routing; transition waste is not applicable."}
-                    </p>
-                    <div className="result-footer">
-                      <button onClick={saveFigure}>
-                        <Download size={14} />
-                        Save image
-                      </button>
-                      <span>
-                        {result.algorithm} · seed {config.seed}
-                      </span>
+                  {run && (
+                    <div className="actions">
                       <button
                         onClick={() =>
                           download(
                             "infilllab-experiment.json",
-                            JSON.stringify(
-                              { ...run, presentation: { colors } },
-                              null,
-                              2,
-                            ),
+                            JSON.stringify({ ...run, colors }, null, 2),
                             "application/json",
                           )
                         }
                       >
-                        <Download size={14} />
-                        Save experiment
+                        <Download size={15} />
+                        JSON
                       </button>
+                      <button
+                        onClick={() =>
+                          download(
+                            "infilllab-results.csv",
+                            summaryCSV(run),
+                            "text/csv",
+                          )
+                        }
+                      >
+                        CSV
+                      </button>
+                      <button onClick={exportSVG}>SVG</button>
                     </div>
+                  )}
+                </div>
+                {result ? (
+                  <>
+                    <div className="result-summary">
+                      <span>
+                        <strong>{fmt(result.used)} mm³</strong> final accepted
+                        volume
+                      </span>
+                      <span>
+                        <strong>{fmt(result.travel)} mm</strong> non-extruding
+                        travel
+                      </span>
+                      <span>
+                        <strong>{fmt(result.coverage * 100)}%</strong> receiver
+                        coverage
+                      </span>
+                      <span>
+                        <strong>{result.unassigned.length}</strong> unfilled
+                        segments
+                      </span>
+                    </div>
+                    <p className="small">
+                      {result.complete
+                        ? "All receiver segments are scheduled."
+                        : "Partial allocation: the remaining geometry is not filled in this model."}{" "}
+                      This is a path and material-accounting simulation, not a
+                      mechanical test. Adaptive search prioritises coverage,
+                      then the weighted discard/travel objective.
+                    </p>
+                    <details>
+                      <summary>Inspect allocation schedule</summary>
+                      <div className="table-scroll">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Segment</th>
+                              <th>Volume interval mm³</th>
+                              <th>cB interval</th>
+                              <th>Local window</th>
+                              <th>Purge before mm³</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {result.steps.map((step) => {
+                              const s = segments[step.id];
+                              return (
+                                <tr key={step.id}>
+                                  <th>{s.label}</th>
+                                  <td>
+                                    {fmt(step.start, 2)} - {fmt(step.end, 2)}
+                                  </td>
+                                  <td>
+                                    {fmt(step.cStart, 3)} - {fmt(step.cEnd, 3)}
+                                  </td>
+                                  <td>
+                                    {fmt(s.low, 3)} - {fmt(s.high, 3)}
+                                  </td>
+                                  <td>{fmt(step.purgeBefore, 2)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="small">
+                        All listed allocations passed the whole-segment
+                        composition check. Unassigned segment IDs:{" "}
+                        {result.unassigned
+                          .map((id) => segments[id].label)
+                          .join(", ") || "none"}
+                        . In single-material mode windows are inactive.
+                      </p>
+                    </details>
                   </>
                 ) : (
-                  <p className="empty-results">
-                    Start the simulation to calculate material use and travel,
-                    then compare different ways to print the same sample.
+                  <p className="muted">
+                    Generate a schedule to inspect its accepted volume, travel
+                    and unfilled receiving segments.
                   </p>
                 )}
-              </section>
-            </div>
+              </div>
+            </section>
           </div>
-          <footer className="studio-footer">
-            InfillLab · Research prototype
-            <span>
-              Geometry and toolpaths. Mechanical strength is not predicted.
-            </span>
-          </footer>
-        </main>
-      )}
+        )}
+        {(error || issues.length > 0) && (
+          <div role="alert" className="error">
+            {error || issues.join(" ")}
+          </div>
+        )}
+      </main>
+      <footer>
+        InfillLab / Model 2.0 · Reproducible scheduling, explicit assumptions.
+        <span>No predicted strength. No machine-ready G-code.</span>
+      </footer>
       <dialog
-        aria-label={
-          modal === "settings"
-            ? "Advanced experiment settings"
-            : "Choose material and colour"
-        }
         ref={dialog}
-        className="settings-dialog"
         onCancel={() => setModal(null)}
         onClick={(e) => {
-          if (e.target === dialog.current) setModal(null);
+          if (e.target === e.currentTarget) setModal(null);
         }}
       >
-        <div className="dialog-content">
-          <header>
-            <div>
-              <p className="kicker">
-                {modal === "settings"
-                  ? "EXPERIMENT OPTIONS"
-                  : `MATERIAL ${materialIndex + 1}`}
-              </p>
-              <h2>
-                {modal === "settings"
-                  ? "Fine-tune your experiment"
-                  : "Choose your filament"}
-              </h2>
-            </div>
-            <button aria-label="Close settings" onClick={() => setModal(null)}>
-              <X size={21} />
-            </button>
-          </header>
-          {modal === "settings" ? (
-            <>
-              <p className="dialog-hint">
-                Defaults are ready to use. Change only what your experiment
-                needs.
-              </p>
-              <Controls
-                compact
-                config={draft}
-                update={(p) => setDraft((c) => ({ ...c, ...p }))}
-              />
-              <button
-                className="reset-settings"
-                onClick={() => setDraft({ ...initial })}
-              >
-                Reset to starter sample
-              </button>
-              <details className="verification-option">
-                <summary>Reference case</summary>
-                <p>
-                  Load the fixed two-track example to check the exact solution.
-                </p>
+        <div className="dialog-heading">
+          <h2>
+            {modal === "patterns"
+              ? "Choose a receiving pattern"
+              : modal === "settings"
+                ? "Experiment settings"
+                : "Material " + (modal === "material1" ? "B" : "A")}
+          </h2>
+          <button aria-label="Close dialog" onClick={() => setModal(null)}>
+            <X size={20} />
+          </button>
+        </div>
+        {modal === "patterns" ? (
+          <>
+            <p className="muted">
+              Nine reference families and one experimental proposal. Geometry is
+              a simplified model, not a slicer replica.
+            </p>
+            <div className="pattern-grid">
+              {PATTERNS.map((p, i) => (
                 <button
+                  key={p.id}
+                  className={config.pattern === p.id ? "selected" : ""}
                   onClick={() => {
-                    patch({ ...BENCHMARK });
+                    patch({ pattern: p.id });
                     setModal(null);
                   }}
                 >
-                  Load verification case
+                  <Preview pattern={p.id} />
+                  <small>
+                    {String(i + 1).padStart(2, "0")}
+                    {i === 9 ? " / PROPOSAL" : ""}
+                  </small>
+                  <strong>{p.name}</strong>
+                  <span>{p.note}</span>
                 </button>
-              </details>
-            </>
-          ) : (
-            <>
-              <div className="material-choices">
-                {materials.map((m) => (
-                  <button
-                    key={m}
-                    className={
-                      (materialIndex ? draft.materialB : draft.materialA) === m
-                        ? "chosen"
-                        : ""
-                    }
-                    onClick={() =>
-                      setDraft((c) => ({
-                        ...c,
-                        [materialIndex ? "materialB" : "materialA"]: m,
+              ))}
+            </div>
+          </>
+        ) : modal?.startsWith("material") ? (
+          <>
+            <p className="muted">
+              Names and colours identify materials. They do not set measured
+              adhesion, transition volume or mechanical properties.
+            </p>
+            <div className="material-options">
+              {["PLA", "PETG", "TPU", "ABS", "Nylon", "Custom"].map((m) => (
+                <button
+                  key={m}
+                  className={
+                    (modal === "material1"
+                      ? draft.materialB
+                      : draft.materialA) === m
+                      ? "selected"
+                      : ""
+                  }
+                  onClick={() =>
+                    setDraft((v) => ({
+                      ...v,
+                      [modal === "material1" ? "materialB" : "materialA"]: m,
+                    }))
+                  }
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            <label className="field">
+              <span>Material label</span>
+              <input
+                maxLength={40}
+                value={
+                  modal === "material1" ? draft.materialB : draft.materialA
+                }
+                onChange={(e) =>
+                  setDraft((v) => ({
+                    ...v,
+                    [modal === "material1" ? "materialB" : "materialA"]:
+                      e.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Display colour</span>
+              <input
+                type="color"
+                value={colors[modal === "material1" ? 1 : 0]}
+                onChange={(e) =>
+                  setColors((v) =>
+                    modal === "material1"
+                      ? [v[0], e.target.value]
+                      : [e.target.value, v[1]],
+                  )
+                }
+              />
+            </label>
+            <button
+              className="primary"
+              onClick={() => {
+                patch({
+                  materialA: draft.materialA,
+                  materialB: draft.materialB,
+                });
+                setModal(null);
+              }}
+            >
+              Apply material
+            </button>
+          </>
+        ) : modal === "settings" ? (
+          <>
+            <p className="muted">
+              One material switch in one receiving layer. Volumes and acceptance
+              windows are research assumptions until calibrated.
+            </p>
+            {config.preset === "benchmark" ? (
+              <div className="notice">
+                Analytical geometry is locked: two 6 mm³ segments, Vtr = 12 mm³,
+                cB = v/Vtr. No inter-segment purge. Switch to Pattern study to
+                change geometry.
+              </div>
+            ) : (
+              <>
+                <div className="field-grid">
+                  {number("width", "Region width (mm)", 5, 150)}
+                  {number("height", "Region height (mm)", 2, 100)}
+                  {number("spacing", "Path spacing (mm)", 0.5, 20, 0.1)}
+                  {multi &&
+                    number(
+                      "transitionVolume",
+                      "Transition volume (mm³)",
+                      0.1,
+                      3000,
+                      1,
+                    )}
+                </div>
+                <label className="field">
+                  <span>Comparison capacity</span>
+                  <select
+                    value={draft.capacityMode}
+                    onChange={(e) =>
+                      setDraft((v) => ({
+                        ...v,
+                        capacityMode: e.target.value as Config["capacityMode"],
                       }))
                     }
                   >
-                    {m}
-                    <small>
-                      {
-                        {
-                          PLA: "Rigid thermoplastic",
-                          PETG: "Rigid thermoplastic",
-                          TPU: "Flexible elastomer",
-                          ABS: "Rigid thermoplastic",
-                          Nylon: "Polyamide",
-                          Custom: "Your own label",
-                        }[m]
-                      }
-                    </small>
-                  </button>
-                ))}
-              </div>
-              {!materials
-                .slice(0, 5)
-                .includes(
-                  materialIndex ? draft.materialB : draft.materialA,
-                ) && (
-                <label className="custom-label">
-                  Material label
-                  <input
-                    defaultValue={
-                      (materialIndex ? draft.materialB : draft.materialA) ===
-                      "Custom"
-                        ? ""
-                        : materialIndex
-                          ? draft.materialB
-                          : draft.materialA
-                    }
-                    maxLength={40}
-                    placeholder="Custom"
-                    onChange={(e) =>
-                      setDraft((c) => ({
-                        ...c,
-                        [materialIndex ? "materialB" : "materialA"]:
-                          e.target.value || "Custom",
-                      }))
-                    }
-                  />
+                    <option value="equal">
+                      Equal volume - trimmed reference variants
+                    </option>
+                    <option value="native">
+                      Native geometry - differing capacities
+                    </option>
+                  </select>
                 </label>
-              )}
-              <h3>Filament colour</h3>
-              <div className="swatches">
-                {swatches.map((color) => (
-                  <button
-                    aria-label={`Choose colour ${color}`}
-                    aria-pressed={draftColors[materialIndex] === color}
-                    key={color}
-                    style={{ background: color }}
-                    onClick={() =>
-                      setDraftColors((v) =>
-                        materialIndex ? [v[0], color] : [color, v[1]],
-                      )
-                    }
-                  />
-                ))}
-                <label title="Custom colour">
-                  <input
-                    aria-label="Custom filament colour"
-                    type="color"
-                    value={draftColors[materialIndex]}
-                    onChange={(e) =>
-                      setDraftColors((v) =>
-                        materialIndex
-                          ? [v[0], e.target.value]
-                          : [e.target.value, v[1]],
-                      )
-                    }
-                  />
-                </label>
-              </div>
-              <p className="material-disclaimer">
-                Material names and colours identify your experiment. They do not
-                imply measured adhesion or validated compatibility.
-              </p>
-              {draft.mode === "multi" && (
-                <details className="material-advanced">
-                  <summary>Advanced transition settings</summary>
-                  <NumberField
-                    label="Transition volume"
-                    value={draft.transitionVolume}
-                    min={0.1}
-                    max={3000}
-                    unit="mm³"
-                    onChange={(v) =>
-                      setDraft((c) => ({ ...c, transitionVolume: v }))
-                    }
-                  />
-                  <p>
-                    One assumed material switch. Composition and acceptance
-                    limits are available in Advanced settings.
+                <details>
+                  <summary>Advanced model settings</summary>
+                  <div className="field-grid">
+                    {number("beadWidth", "Bead width (mm)", 0.2, 2, 0.05)}
+                    {number("layerHeight", "Layer height (mm)", 0.05, 1, 0.05)}
+                    {multi && (
+                      <>
+                        {number("gamma", "Composition exponent γ", 0.2, 5, 0.1)}
+                        {number(
+                          "tolerance",
+                          "Local window half-width",
+                          0.02,
+                          0.5,
+                          0.01,
+                        )}
+                        {number("eligibleLow", "Global cB minimum", 0, 1, 0.05)}
+                        {number(
+                          "eligibleHigh",
+                          "Global cB maximum",
+                          0,
+                          1,
+                          0.05,
+                        )}
+                        <label className="field">
+                          <span>Acceptance field</span>
+                          <select
+                            value={draft.acceptance}
+                            onChange={(e) =>
+                              setDraft((v) => ({
+                                ...v,
+                                acceptance: e.target
+                                  .value as Config["acceptance"],
+                              }))
+                            }
+                          >
+                            <option value="graded">
+                              Position-dependent windows
+                            </option>
+                            <option value="uniform">Uniform [0, 1]</option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Switch direction</span>
+                          <select
+                            value={draft.direction}
+                            onChange={(e) =>
+                              setDraft((v) => ({
+                                ...v,
+                                direction: e.target
+                                  .value as Config["direction"],
+                              }))
+                            }
+                          >
+                            <option>AB</option>
+                            <option>BA</option>
+                          </select>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                  <p className="small">
+                    IDEX / separate nozzles do not share this transition model.
+                    PLA/TPU compatibility and feeding must be established
+                    separately.
                   </p>
                 </details>
-              )}
-              {materialIndex === 1 && config.mode === "multi" && (
-                <button
-                  className="remove-material"
-                  onClick={() => {
-                    patch({ mode: "single" });
-                    setModal(null);
-                  }}
-                >
-                  Remove second material
-                </button>
-              )}
-            </>
-          )}
-          {validateConfig(draft).length > 0 && (
-            <p className="inline-error" role="alert">
-              {validateConfig(draft).join(" ")}
-            </p>
-          )}
-          <footer>
-            <button className="cancel-button" onClick={() => setModal(null)}>
-              Cancel
-            </button>
+              </>
+            )}
+            <details>
+              <summary>Search and repeatability</summary>
+              <div className="field-grid">
+                {number("iterations", "Iterations per seed", 10, 2000, 10)}
+                {number("replicates", "Seeds", 1, 10)}
+                {number("seed", "Starting seed", 0, 4294967295)}
+                {number("alpha", "Discard weight α", 0, 1, 0.05)}
+              </div>
+            </details>
+            {validateConfig(draft).length > 0 && (
+              <p className="error">{validateConfig(draft).join(" ")}</p>
+            )}
             <button
-              className="start-button"
+              className="primary"
               disabled={validateConfig(draft).length > 0}
-              onClick={save}
+              onClick={() => {
+                patch(draft);
+                setModal(null);
+              }}
             >
-              Apply changes <ArrowRight size={16} />
+              Apply settings
             </button>
-          </footer>
-        </div>
+          </>
+        ) : null}
       </dialog>
     </div>
   );

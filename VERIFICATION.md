@@ -1,30 +1,19 @@
 # Verification record
 
-Version 1.0.0, 25 September 2026.
+Model 2.0.0, 28 September 2026.
 
-- TypeScript compilation and Vite production build passed.
-- All 12 model tests passed under Vitest 4.1.11.
-- Dependency audit reported zero known vulnerabilities at installation time.
-- Browser checks covered default calculation, benchmark comparison, parameter changes, zero-assignment case, start/pause controls, track inspection, methods and references.
-- At a 390 px viewport the document had no horizontal overflow.
-- Production preview loaded and completed worker calculations.
-- JSON, CSV and SVG were downloaded through the production UI and parsed successfully. The default JSON contained three compared methods; CSV contained three comparisons and three replicate rows.
+## Automated checks
 
-## Numerical checks
+18 Vitest tests cover the eight-schedule exact benchmark, volume conservation and upper bounds, forward/reverse composition and nonlinear inverse curves, deterministic seeded search, replicate reporting, input validation, single-material allocation, all ten pattern geometries, predecessor constraints, equal nominal capacity, and live accounting at intermediate playback positions.
 
-The exact two-track case gives 12 mm3 allocated, 0 mm3 discarded and 28.284271 mm travel. The forward raster gives 84.852814 mm travel. These are idealised mathematical results, not experimental measurements.
+The exact feasible benchmark allocates 12 mm3, discards 0 mm3 and travels 28.284271 mm. The shorter B-first geometric route is rejected. These are mathematical results, not experimental measurements.
 
-Tests cover the volume upper bound, conservation, both switch directions and nonlinear composition curves, inverse composition, layer precedence, insufficient volume, seed repeatability, benchmark normalisation and rejection of invalid imports. Chevron spacing below twice bead width is rejected to prevent adjacent-path overlap in the simplified geometry.
+TypeScript and Vite production build are checked before deployment. GitHub Actions repeats tests and build.
 
 ## Limits
 
-No real-printer validation, mechanical validation or live GitHub deployment was performed. Browser checks are a manual smoke test, not a complete cross-browser accessibility certification. The application must not be used to claim improved material strength without independent evidence.
+Patterns are simplified centreline models; bead overlap and physical clearance are not validated. Equal-capacity comparisons trim native paths. Mechanical properties, material compatibility and real printer behaviour remain unvalidated. Browser checks are smoke tests, not a full accessibility or cross-browser certification.
 
-## Simplified workspace update
+## Browser checks
 
-- Main workspace uses material dialogs, three basic sample controls and collapsed advanced sections.
-- Added smooth schematic deposition on a rotatable projected build plate, custom filament colours, single-material mode, PNG export and colour metadata in JSON exports.
-- 14 model tests pass, including complete single-material allocation without transition waste and compatibility with older JSON configurations.
-- Production build passed. Browser checks verified single-material execution, addition of a second material, colour selection, rerunning, comparison and collapsed settings.
-- At a 390 px mobile viewport there was no document overflow, and the material dialog remained usable. No browser console errors were observed.
-- Playback speed is illustrative, not physical print time. Layer height is exaggerated by four in perspective view.
+The desktop UI completed the default study and ten-pattern comparison, displayed the rejected shortcut and feasible benchmark results, and opened the pattern picker and Methods page. At a 390 px viewport, the document width matched its scroll width and the pattern dialog remained within the viewport. No warning or error messages were observed in the browser console. JSON, CSV and SVG were downloaded through the UI and parsed: schema infilllab/2, three comparison results, six CSV data rows and valid SVG XML.

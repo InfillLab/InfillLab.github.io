@@ -1,3 +1,4 @@
+import { patternGeometry, PATTERNS } from "./patterns";
 import {
   DEFAULT,
   type Config,
@@ -13,6 +14,18 @@ export const distance = (a: Point, b: Point) =>
   Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 export function validateConfig(c: Config): string[] {
   const errors: string[] = [];
+  if (c.width < 6 * c.beadWidth || c.height < 6 * c.beadWidth)
+    errors.push("Region dimensions must be at least six bead widths.");
+  if (c.layers !== 1)
+    errors.push("Version 2 models one receiving layer per material switch.");
+  if (!["native", "equal"].includes(c.capacityMode))
+    errors.push("Unknown capacity comparison mode.");
+  if (!["shared", "idex"].includes(c.hardware))
+    errors.push("Unknown hardware architecture.");
+  if (c.mode === "multi" && c.hardware !== "shared")
+    errors.push(
+      "IDEX has separate melt paths. The transition-allocation model does not apply.",
+    );
   if (!["single", "multi"].includes(c.mode))
     errors.push("Unknown material mode.");
   const range = (
@@ -53,25 +66,16 @@ export function validateConfig(c: Config): string[] {
   range("purgeRate", 0.1, 50);
   if (c.eligibleLow >= c.eligibleHigh)
     errors.push("Eligibility lower limit must be below its upper limit.");
-  if (c.spacing < c.beadWidth)
-    errors.push(
-      "Line spacing must be at least the bead width (no double-counted overlap).",
-    );
-  if (
-    c.preset === "interface" &&
-    c.pattern === "chevron" &&
-    c.spacing < 2 * c.beadWidth
-  )
-    errors.push(
-      "Chevron spacing must be at least twice the bead width to keep neighbouring tracks separate.",
-    );
+  if (c.spacing < 2 * c.beadWidth)
+    errors.push("Use spacing of at least twice the bead width.");
+
   if (c.layerHeight > c.beadWidth)
     errors.push(
       "Layer height must not exceed bead width in this simplified bead model.",
     );
   if (!["interface", "benchmark"].includes(c.preset))
     errors.push("Unknown experiment.");
-  if (!["parallel", "chevron", "ribs"].includes(c.pattern))
+  if (!PATTERNS.some((p) => p.id === c.pattern))
     errors.push("Unknown pattern.");
   if (!["uniform", "graded"].includes(c.acceptance))
     errors.push("Unknown acceptance field.");
@@ -97,8 +101,10 @@ export function parseConfig(value: unknown): Config {
   if (!value || typeof value !== "object")
     throw new Error("Expected an InfillLab configuration or exported run.");
   const v = value as Record<string, unknown>;
-  if (v.schema !== undefined && v.schema !== "infilllab/1")
-    throw new Error("Unsupported file schema.");
+  if (v.schema !== undefined && v.schema !== "infilllab/2")
+    throw new Error(
+      "This version accepts InfillLab 2 experiments. Recreate older experiments with the new pattern catalogue.",
+    );
   const raw = (v.config ?? v) as Record<string, unknown>;
   const config = Object.fromEntries(
     Object.keys(DEFAULT).map((k) => [
@@ -158,51 +164,7 @@ export function geometry(config: Config): Segment[] {
         high: 1,
       },
     ];
-  const segments: Segment[] = [];
-  const rows = Math.ceil(c.height / c.spacing);
-  for (let layer = 0; layer < c.layers; layer++) {
-    for (let row = 0; row < rows; row++) {
-      const y = c.beadWidth / 2 + row * c.spacing;
-      if (y > c.height - c.beadWidth / 2 + EPS) continue;
-      let x0 = c.beadWidth / 2,
-        x1 = c.width - c.beadWidth / 2;
-      if (c.pattern === "ribs") {
-        if (row % 2 === 0) x1 = c.width * 0.7;
-        else x0 = c.width * 0.3;
-      }
-      const points =
-        c.pattern === "chevron"
-          ? [
-              p(x0, y, layer),
-              p(
-                c.width / 2,
-                Math.min(c.height - c.beadWidth / 2, y + c.spacing * 0.3),
-                layer,
-              ),
-              p(x1, y, layer),
-            ]
-          : [p(x0, y, layer), p(x1, y, layer)];
-      const length = points
-        .slice(1)
-        .reduce((sum, q, i) => sum + distance(points[i], q), 0);
-      const target = 0.2 + (0.6 * row) / Math.max(1, rows - 1);
-      const low =
-        c.acceptance === "uniform" ? 0 : Math.max(0, target - c.tolerance);
-      const high =
-        c.acceptance === "uniform" ? 1 : Math.min(1, target + c.tolerance);
-      segments.push({
-        id: segments.length,
-        label: `${layer + 1}.${row + 1}`,
-        layer,
-        points,
-        length,
-        volume: length * c.beadWidth * c.layerHeight,
-        low,
-        high,
-      });
-    }
-  }
-  return segments;
+  return patternGeometry(c);
 }
 export const startPoint = (c: Config): Point =>
   c.preset === "benchmark" ? { x: 0, y: 10, z: 0 } : { x: 0, y: 0, z: 0 };
@@ -343,6 +305,12 @@ export function evaluate(
       )
     )
       continue;
+    if (
+      s.predecessor !== undefined &&
+      !steps.some((p) => p.id === s.predecessor)
+    )
+      continue;
+    if (s.locked && choice.reverse) continue;
     const step = place(s, choice.reverse, cursor, position, c);
     if (!step) continue;
     steps.push(step);
@@ -384,7 +352,12 @@ function construct(
     for (const id of remaining) {
       const segment = segments[id];
       if (segment.layer !== layer) continue;
-      for (const reverse of [false, true]) {
+      if (
+        segment.predecessor !== undefined &&
+        remaining.has(segment.predecessor)
+      )
+        continue;
+      for (const reverse of segment.locked ? [false] : [false, true]) {
         const step = place(segment, reverse, cursor, position, c);
         if (!step) continue;
         const cost = step.travel + step.purgeBefore * 3;
@@ -433,7 +406,7 @@ export function baselines(c: Config, segments = geometry(c)): Result[] {
       c,
       segments,
       segments.map((s) => ({ id: s.id, reverse: false })),
-      "Fixed raster",
+      "Reference order",
     ),
     construct(c, segments, null, null),
   ];
@@ -531,8 +504,8 @@ export function runStudy(
   results.push(replicates[0]);
   if (c.preset === "benchmark") results.push(exactBenchmark(c, segments));
   return {
-    schema: "infilllab/1",
-    modelVersion: "1.0.0",
+    schema: "infilllab/2",
+    modelVersion: "2.0.0",
     createdAt: new Date().toISOString(),
     config: c,
     segments,

@@ -1,78 +1,46 @@
-# InfillLab
+# InfillLab 2
 
-Interaktivna aplikacija za proucavanje rasporedivanja prijelaznog materijala u infill i optimizacije putanje. React, TypeScript i Vite. Svi izracuni odvijaju se u pregledniku, u zasebnom Web Workeru. Nije potreban backend, baza podataka ni API kljuc.
+A browser-based research demonstrator for chronological transition-material allocation in a single shared-melt-path receiving layer. React, TypeScript, Vite and a local Web Worker. No server, API key or external computation service.
 
-## Pokretanje u VS Codeu
+## Run locally
 
-Otvorite ovu mapu u VS Codeu. Potreban je Node.js 22.12 ili noviji (preporuka: Node 24).
+Node.js 22.12+ is required.
 
-```powershell
-npm install
+```sh
+npm ci
 npm run dev
-```
-
-Otvorite adresu koju terminal ispise, obicno http://127.0.0.1:5173. Terminal mora ostati pokrenut.
-
-```powershell
 npm test
 npm run build
 npm run preview
 ```
 
-`build` stvara produkcijsku aplikaciju u `dist`. Nemojte otvarati `index.html` dvoklikom: modulima i Web Workeru treba HTTP posluzitelj.
+Open the HTTP address printed by Vite. Do not open index.html directly.
 
-## GitHub Pages
+## Workflow
 
-1. Napravite GitHub repozitorij, primjerice `InfillLab`, s granom `main`.
-2. Prenesite sadrzaj ove mape u korijen repozitorija. Ukljucite `src`, `public`, `.github/workflows/deploy.yml`, `package.json`, `package-lock.json`, `index.html`, `tsconfig.json`, `vite.config.ts`, `.gitignore` i dokumentaciju. Nemojte prenositi `node_modules` ni `dist`. VS Code Source Control postuje `.gitignore`.
-3. U repozitoriju odaberite Settings > Pages > Source > GitHub Actions.
-4. Workflow "Deploy InfillLab" pokrece testove i build pa objavljuje stranicu. Ako je prvi pokusaj bio prije aktivacije Pagesa, ponovno ga pokrenite iz kartice Actions.
-5. Adresa objavljene aplikacije prikazat ce se u Settings > Pages i u izvrsenom workflowu.
+1. Choose one or two material labels and display colours.
+2. Select one of nine reference pattern families or experimental TAII.
+3. Set region size, spacing and transition volume. Advanced settings expose composition, acceptance and seeded search parameters.
+4. Generate a schedule. Follow pure A, transition increments and pure B, then inspect final allocation and travel.
+5. Compare all ten patterns on the Compare tab. Export CSV summaries or the complete versioned JSON.
+6. Use the fixed two-segment example to compare the infeasible 14.142 mm shortcut against the feasible 28.284 mm schedule.
 
-Vite koristi relativni `base: './'`, pa ime repozitorija nije potrebno upisivati u kod. Ako koristite drugu granu, promijenite `branches` u workflowu. Dostupnost Pagesa za privatni repozitorij ovisi o GitHub planu.
+## Scope
 
-## Sto aplikacija radi
+The nine reference families are Concentric, Rectilinear, Monotonic, Monotonic line, Global monotonic line, Aligned Rectilinear, Hilbert Curve, Archimedean Chords and Octagram Spiral. These are simplified centreline constructions, not exact slicer replicas. Some coincide in one rectangular layer. TAII is a proposed staggered finger geometry, not experimentally proven reinforcement.
 
-- Generira paralelne, chevron ili naizmjenicne kratke putanje kroz jedan ili vise slojeva.
-- Prati pretpostavljeni udio materijala B prema istisnutom volumenu.
-- Usporeduje fiksni raster, najblizi dopusteni segment i eksperimentalnu adaptivnu pretragu.
-- Animira postupno polaganje putanja, kretanje mlaznice i slojeve na rotirajucoj radnoj ploci. Animacija je shematska, nije simulacija stvarne brzine stroja.
-- Izracunava dodijeljeni i odbaceni volumen, duljinu praznih pomaka, pokrivenost i idealizirano vrijeme.
-- Ponovljene pretrage koriste zapisane seedove. Glavni prikaz koristi prvi seed, bez skrivene selekcije najboljeg rezultata.
-- Izvozi puni eksperiment u JSON, usporednu tablicu u CSV i trenutni prikaz putanje u PNG. JSON se moze ponovno uvesti; rezultati se tada ponovno racunaju.
-- Ukljucuje provjerljivi slucaj s dva segmenta i iscrpnim pretrazivanjem svih osam rasporeda.
+Native mode preserves each generated pattern. Equal-volume mode proportionally trims every native path to the minimum catalogue capacity. Those controlled variants can lose the full native appearance. Capacity is nominal centreline length times bead cross section; overlapping bead volumes and manufacturing feasibility are not resolved.
 
-## Predlozeni prvi eksperiment
+The composition model is an assumed monotonic power law. Windows are user-defined design constraints, not measured adhesion criteria. Allocation preserves chronology and reference-specific ordering. Unused receiver segments remain empty. Animation increments are at most Vtr/180 and preserve material accounting. Actual discard accumulates; avoided discard grows with accepted volume.
 
-1. Kliknite karticu materijala da odaberete filament i boju. Drugi materijal dodaje se gumbom `Add a second material`.
-2. Pokrenite `Start simulation`, zatim kliknite `Compare` za usporedbu metoda na istoj geometriji.
-3. Promijenite `Transition volume`, razmak ili `Path family`, zatim kliknite `Start simulation`.
-4. Promatrajte razliku izmedu `Complete allocation` i `Partial allocation`. Kraca nepotpuna putanja nije dokaz boljeg ispisa.
-5. Odaberite `Advanced settings > Reference case > Load verification case`. Tocno rjesenje treba imati 12 mm3 dodijeljenog materijala, bez otpada i oko 28.2843 mm praznog pomaka.
-6. Izvezite JSON radi ponovljivosti i CSV/PNG za daljnju obradu i figure.
+Only shared melt paths use the transition model. Separate-nozzle systems such as IDEX are excluded from multi-material calculations. Material labels do not enable hardware compatibility or mechanical property presets. There is no strength simulation, physical calibration or G-code generation.
 
-## Znanstveni opseg
+The seeded adaptive heuristic reinforces promising path edges. It is not the canonical Slime Mould Algorithm. It prioritises coverage, then a weighted discard/travel score. All seed results are exported; the UI shows the first seed. See the in-app Methods tab for exact definitions and source links.
 
-Ovo je geometrijski model raspodjele materijala i rasporedivanja putanja. Ne simulira naprezanje, lom, adheziju, kemijsku kompatibilnost ili stvarno mijesanje PLA i TPU. Imena materijala su oznake. Parametri sastava i prihvatljivosti su pretpostavke korisnika, bez automatske kalibracije iz literature.
+## Versioning and publishing
 
-Model prati jednu monotonicnu promjenu materijala. Cijeli segment mora stati u svoj dopusteni interval sastava. Nedodijeljeni segmenti nisu proizvedeni; njihovo kasnije popunjavanje cistim materijalom izvan je modela. Ne generira se G-code. Projekcija slojeva nije FEM model ni dokaz mehanickog uklapanja.
+JSON schema is `infilllab/2`, model version `2.0.0`. Version 1 exports must be recreated because their geometry and multilayer assumptions differ. Imported results are discarded and recalculated.
 
-Adaptivna pretraga koristi pojacavanje odabranih veza inspirirano transportnim mrezama. Nije implementacija objavljenog Slime Mould Algorithm algoritma i ne jamci globalni optimum. Za mali referentni slucaj optimum se provjerava iscrpnim pretrazivanjem.
+Push main to trigger `.github/workflows/deploy.yml`, which runs tests and production build before deploying to GitHub Pages. Pages must use GitHub Actions. `node_modules` and `dist` are generated locally and excluded by `.gitignore`; neither belongs in a commit. User backup archives should not be committed.
 
-Detaljne jednadzbe, ogranicenja i 11 referenci dostupni su u aplikaciji pod `Methods`. Ne prenose se PDF-ovi radova.
-
-## Struktura
-
-- `src/model/engine.ts`: geometrija, bilanca volumena, ogranicenja i algoritmi.
-- `src/model/engine.test.ts`: provjere modela i ulaznih podataka.
-- `src/model/worker.ts`: racunanje izvan glavne dretve sucelja.
-- `src/components/Plot.tsx`: SVG prikaz putanje i sastava.
-- `src/components/Controls.tsx`: parametri eksperimenta.
-- `src/components/Methods.tsx`: metodologija i reference.
-- `src/io.ts`: izvoz rezultata.
-- `src/Studio.tsx`: pojednostavljeni radni prostor, materijali i usporedba.
-- `src/components/PrintScene.tsx`: animacija i projekcija slojeva.
-- `src/studio.css`: dizajn novog sucelja.
-- `src/styles.css`: responzivni dizajn i stil za ispis.
-
-Eksperiment spremite u JSON za kasniji uvoz. `Advanced settings > Reset to starter sample` vraca pocetne vrijednosti nakon potvrde `Apply changes`. Nema korisnickih racuna ni slanja rezultata na posluzitelj.
+Live site: https://infilllab.github.io/

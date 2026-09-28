@@ -1,231 +1,221 @@
-const papers = [
-  [
-    "Ettayan et al. (2025)",
-    "Review on multi-material 3D printing via FDM",
-    "10.5604/01.3001.0055.4326",
-  ],
-  [
-    "Evans et al. (2025)",
-    "Sustainable design approaches for thermoplastics in additive manufacturing",
-    "10.1017/pds.2025.10311",
-  ],
-  [
-    "Goh et al. (2024)",
-    "Enhancing interlaminar adhesion in multi-material 3D printing",
-    "10.36922/msam.2672",
-  ],
-  [
-    "Frascio et al. (2024)",
-    "Investigating enhanced interfacial adhesion: t and Mickey Mouse geometries",
-    "10.1007/s40964-024-00570-8",
-  ],
-  [
-    "Farràs-Tasias et al. (2026)",
-    "Printing orientation and interfacial mechanical design enable superior bonding",
-    "10.1038/s44334-026-00075-y",
-  ],
-  [
-    "Birosz & Andó (2024)",
-    "Effect of infill pattern scaling on mechanical properties of FDM-printed PLA specimens",
-    "10.1007/s40964-023-00487-8",
-  ],
-  [
-    "Aboelella et al. (2025)",
-    "Layer combination of similar infill patterns on tensile and compression behaviour",
-    "10.1038/s41598-025-94446-8",
-  ],
-  [
-    "Gebrehiwot et al. (2023)",
-    "Optimising the mechanical properties of additive-manufactured recycled PLA",
-    "10.1007/s00170-023-12623-3",
-  ],
-  [
-    "Meng X. et al. (2025)",
-    "Adaptive Infill Method Based on Cross-Section Features and Transition-Layer Design [preprint]",
-    "10.21203/rs.3.rs-7965413/v1",
-  ],
-  [
-    "Meng Z. et al. (2025)",
-    "Lace 3D printing for deployable mechanical metamaterials",
-    "10.1080/17452759.2025.2590577",
-  ],
-  [
-    "Brackett et al. (2026)",
-    "Transition Behavior in Blended Material Large Format Additive Manufacturing",
-    "10.3390/polym18020178",
-  ],
-];
+import { PATTERNS } from "../model/patterns";
 export default function Methods() {
   return (
     <article className="methods">
-      <div className="page-intro">
-        <span className="eyebrow">MODEL NOTES / VERSION 1.0.0</span>
-        <h2>What is being calculated?</h2>
-        <p>
-          A geometric allocation model for one shared-nozzle material switch.
-          The model asks whether a time-ordered material stream can fill a fixed
-          set of tracks within their composition limits.
-        </p>
+      <div className="eyebrow">
+        MODEL 2.0 / SCOPE, ASSUMPTIONS & VERIFICATION
       </div>
-      <div className="method-grid">
-        <section>
-          <h3>1. Geometry and capacity</h3>
-          <p>
-            Each track is a polyline with a constant rectangular bead area.
-            Track volume is length × bead width × layer height. All lower-layer
-            tracks must be assigned before the next layer is available.
-            Parallel, chevron and alternating-rib families are idealised
-            receiving geometries.
-          </p>
-          <div className="formula">
-            V<sub>i</sub> = l<sub>i</sub> w h<br />V<sub>cap</sub> = Σ V
-            <sub>i</sub>
-          </div>
-          <p>
-            There is no overlap correction, support solver or collision mesh.
-            Direct travel is assumed clear. A drawn rib is not automatically a
-            load-bearing interlock.
-          </p>
-        </section>
-        <section>
-          <h3>2. Composition history</h3>
-          <p>
-            For A → B, the fraction of B is c(v) = (v/V<sub>tr</sub>)
-            <sup>γ</sup>. For B → A it is 1 - (v/V<sub>tr</sub>)<sup>γ</sup>.
-            These monotonic curves are assumed inputs, not calibrated material
-            laws. Changing a material label does not change properties.
-          </p>
-          <p>
-            The global eligible window is intersected with each track's
-            acceptance window. Graded targets range from 20% to 80% B along y
-            and repeat in each layer. The half-width defines their tolerance.
-            Uniform tracks accept the whole global window.
-          </p>
-          <p>
-            Because c(v) is monotonic, checking both deposition endpoints proves
-            that the entire track remains within its allowed window.
-          </p>
-        </section>
-        <section>
-          <h3>3. Allocation and conservation</h3>
-          <p>
-            Before a track is deposited, the model may purge forward to its
-            earliest allowed composition. It never reverses the composition
-            history. A track that cannot fit in its remaining volume window is
-            left unassigned. All unused transition volume is counted as external
-            discard.
-          </p>
-          <div className="formula">
-            V<sub>tr</sub> = V<sub>use</sub> + V<sub>dis</sub>
-            <br />V<sub>use</sub> ≤ min(V<sub>elig</sub>, V<sub>cap</sub>)
-          </div>
-          <p>
-            An incomplete allocation is not a complete part. Remaining geometry
-            requires a separate clean-material operation outside this model. No
-            extra switch is silently introduced.
-          </p>
-        </section>
-        <section>
-          <h3>4. Search and comparison</h3>
-          <p>
-            <b>Fixed raster:</b> original track order, forward direction.
-            Impossible tracks are skipped and reported. <b>Nearest feasible:</b>{" "}
-            greedily minimises direct travel + 3 × purge-before volume in its
-            candidate-ranking heuristic (3 mm per mm³). This coefficient is a
-            heuristic, not a physical law.
-          </p>
-          <p>
-            <b>Adaptive search:</b> seeded random construction of feasible
-            routes, biased by the same heuristic and reinforced successful
-            connections. It is an experimental edge-reinforcement algorithm
-            inspired by transport adaptation, not an implementation of the
-            canonical Slime Mould Algorithm.
-          </p>
-          <div className="formula">
-            J = α V<sub>dis</sub>/V<sub>tr</sub> + (1 - α) L/L<sub>ref</sub>
-          </div>
-          <p>
-            Complete routes rank above partial ones; among partial routes,
-            higher assigned volume ranks first. J breaks equal-coverage
-            comparisons. L<sub>ref</sub> is the number of tracks × the domain
-            diagonal. The first seed is displayed; all replicate results are
-            retained.
-          </p>
-          <p>
-            The weight α reports a composite cost; it does not trade away
-            coverage. At equal assigned volume the discard term is constant, so
-            all α below 1 prefer the shorter route. At α = 1 travel is not
-            distinguished.
-          </p>
-        </section>
+      <h1>What this experiment can establish.</h1>
+      <p>
+        InfillLab tests the chronological allocation of a material-switch
+        transition to receiving paths in one layer. It compares schedules,
+        accepted volume and non-extruding travel. It does not establish
+        adhesion, tensile strength, compressive energy absorption or
+        printability.
+      </p>
+      <div className="notice">
+        TAII (Transition-Aware Interlaced Infill) is an experimental finger-path
+        proposal. A higher reuse fraction is not evidence of a stronger joint,
+        and neither mechanical benefit nor originality is established here.
       </div>
-      <section className="method-wide">
-        <h3>Analytical verification case</h3>
-        <p>
-          Two 60 mm tracks each require 6 mm³. A joins (10, 0) to (70, 0); B
-          joins (0, 10) to (60, 10), in millimetres. The nozzle starts at (0,
-          10). A accepts 0-50% B and B accepts 50-100% B. The transition is
-          linear over 12 mm³; purging and extra switching are prohibited.
-        </p>
-        <p>
-          All eight order/direction combinations are enumerated. The
-          unconstrained geometric minimum B-A travels √200 ≈ 14.142 mm but
-          violates composition. The shortest feasible A-B route travels 2√200 ≈
-          28.284 mm and allocates all 12 mm³. This is a mathematical example,
-          not a printer measurement.
-        </p>
-      </section>
-      <section className="method-wide limitations">
-        <h3>Scope of scientific claims</h3>
-        <p>
-          InfillLab predicts allocation and idealised travel. It does not
-          predict adhesion, tensile strength, compression behaviour, energy
-          absorption, thermal history, viscosity or failure. Reinforcement needs
-          independent material characterisation and mechanical comparison
-          against an identical clean-material interlock. Layer-stack rendering
-          is a geometric projection, not finite-element analysis. No
-          machine-ready G-code is produced.
-        </p>
-        <p>
-          Timing uses constant deposition/travel speeds and a purge flow rate.
-          It excludes acceleration, retraction, temperature changes,
-          material-switch delays and travel to the purge station. Partial runs
-          cover different deposited amounts and must not be compared as equally
-          completed prints.
-        </p>
-      </section>
-      <section className="method-wide">
-        <h3>Reproducibility</h3>
-        <p>
-          Export JSON to preserve the full parameter set, model version, all
-          schedules, random seeds and convergence histories. Importing a file
-          validates its configuration and recomputes results; it does not trust
-          stored metrics. CSV contains summary rows for the compared methods and
-          all adaptive replicates. Browser runtime varies with hardware and is
-          reported separately from the ideal process time.
-        </p>
-      </section>
-      <section className="method-wide">
-        <h3>Literature informing the study</h3>
-        <p>
-          These sources motivate the research question. They do not calibrate
-          the numerical inputs used here.
-        </p>
-        <ol className="references">
-          {papers.map(([author, title, doi]) => (
-            <li key={doi}>
-              <span>{author}</span>{" "}
-              <a
-                href={`https://doi.org/${doi}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {title}
-              </a>
-            </li>
+      <h2>Hardware and material history</h2>
+      <p>
+        The multi-material model applies only to a shared melt path.
+        Separate-nozzle systems, including IDEX, have no shared chamber
+        transition represented by this model. A shared nozzle creates a
+        changeover interval but does not guarantee a homogeneous or compatible
+        polymer blend. Material names and colours are labels. Soft TPU feeding
+        and actual printer compatibility require independent verification.
+      </p>
+      <p>
+        The assumed B volume fraction is cB(v) = (v/Vtr)^γ for A to B and 1 -
+        (v/Vtr)^γ for B to A. This monotonic surrogate must be calibrated for a
+        specific material pair and extrusion system before making physical
+        claims. Pure-material strokes in the animation are context only, outside
+        the transition budget. Playback speed is illustrative, not printer time.
+      </p>
+      <h2>Geometry, reference families and the proposed tenth pattern</h2>
+      <p>
+        The nine names follow surface-fill families used in slicers. They are
+        not nine independent structural infill inventions. The simulator uses
+        simplified centreline constructions; no claim of bit-for-bit equivalence
+        to Bambu Studio or OrcaSlicer is made. In a single rectangular layer,
+        some variants coincide.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Pattern</th>
+            <th>Implementation and scheduling constraints</th>
+          </tr>
+        </thead>
+        <tbody>
+          {PATTERNS.map((p) => (
+            <tr key={p.id}>
+              <th>{p.name}</th>
+              <td>{p.note}</td>
+            </tr>
           ))}
-        </ol>
-      </section>
+        </tbody>
+      </table>
+      <p>
+        Connected reference curves preserve segment order and direction.
+        Monotonic variants preserve global order. Other paths may be reordered
+        and reversed. Candidate allocation segments have nominal length max(2
+        mm, total controlled length / 70), with shorter residual segments at
+        path ends. This segmentation affects feasibility and is part of the
+        experimental definition. Optimising a reference changes its execution
+        order only where allowed.
+      </p>
+      <p>
+        Native mode retains the generated geometry and its own nominal capacity.
+        Equal-volume mode uses the minimum native capacity across all ten
+        patterns and proportionally trims the end of each native path to match
+        that budget. A trimmed curve may not retain the full appearance or
+        coverage of its native pattern. Equal capacity does not equal identical
+        topology or spatial coverage.
+      </p>
+      <p>
+        Vcap is the sum of centreline length × bead width × layer height. It is
+        a nominal path-volume budget, not a Boolean union of deposited solids.
+        Bead overlap, sharp corners, crossing paths, pressure, thermal history
+        and nozzle clearance are not resolved. In particular, spiral centres and
+        the proposed interlacing require geometric and manufacturing validation.
+      </p>
+      <h2>Acceptance and chronological allocation</h2>
+      <p>
+        Each segment has a local interval [low, high] for cB. In graded mode,
+        its target is 0.15 + 0.7 × mean(vertex y) / region height, with a
+        user-defined half-width and clipping to [0, 1]. Uniform mode uses [0,
+        1]. These are design assumptions, not measured compatibility limits.
+        Global eligibility intersects each local interval.
+      </p>
+      <p>
+        Because cB(v) is monotonic, the algorithm checks both endpoints of the
+        whole segment's volume interval. Accepted segments consume the next
+        available suitable transition volume. An earlier unsuitable interval can
+        be purged externally; the extrusion cursor never moves backwards.
+        Unassigned segments stay unfilled. Predecessor constraints prevent
+        depositing a later part of an ordered curve before its earlier part.
+      </p>
+      <div className="formula">
+        Vuse + Vdis = Vtr
+        <br />η = Vuse / Vtr ≤ min(Vcap, Velig) / Vtr
+      </div>
+      <p>
+        The bound ignores chronology and individual windows. Reaching it is not
+        guaranteed. For animation, each accepted or discarded interval is
+        subdivided into increments no larger than Vtr/180. These display
+        increments do not change segment-level decisions. Live accepted and
+        discarded totals are cumulative; remaining volume decreases. Avoided
+        discard equals accepted volume against a discard-all baseline. An
+        external purge receives y = 0, and accepted placement receives y = 1.
+      </p>
+      <h2>The 14.14 mm counterexample</h2>
+      <p>
+        The nozzle begins at (0, 10). Segment A runs from (10, 0) to (70, 0),
+        and B from (0, 10) to (60, 10). Each requires 6 mm³. Vtr = 12 mm³ and cB
+        = v/Vtr. A accepts [0, 0.5] and B accepts [0.5, 1]. This example forbids
+        inter-segment purge.
+      </p>
+      <p>
+        The shortest geometric route visits B forward, then A in reverse, with
+        √200 = 14.142 mm travel. Both composition intervals are wrong. The
+        complete feasible route visits A forward, then B in reverse, with 2√200
+        = 28.284 mm travel. Exact enumeration checks both orders and both
+        directions, eight possibilities. The red shortcut view is a rejected
+        diagnostic, never a valid result or a reuse claim.
+      </p>
+      <h2>Search, comparison and reproducibility</h2>
+      <p>
+        Reference order and nearest-feasible scheduling form baselines. Adaptive
+        search repeatedly samples feasible candidates and reinforces edges in
+        its best schedule. It is an experimental reinforcement heuristic, not an
+        implementation or validation of the canonical Slime Mould Algorithm.
+        Complete schedules rank above partial schedules; among partial
+        schedules, greater receiver coverage ranks first. The weighted objective
+        J = α Vdis/Vtr + (1 - α) Ltravel/Lref breaks ties, where Lref is the
+        number of receiver segments multiplied by the region diagonal including
+        one layer height. Thus α does not trade away coverage.
+      </p>
+      <p>
+        For a fixed configuration and seed, the schedule is reproducible. The
+        main view uses the first seed; exports include every replicate and
+        convergence trace. The comparison uses identical seeds and search
+        budgets for all ten geometries. Native-mode volume differences must be
+        interpreted with capacity and coverage. Single-material mode removes
+        composition restrictions and uses nominal capacity as its deposition
+        budget.
+      </p>
+      <p>
+        JSON records the complete versioned configuration, geometry, schedules,
+        traces and presentation colours. CSV includes numerical summaries and
+        configuration. Version 1 experiments must be recreated because their
+        patterns and layer assumptions differ. All calculations run locally in a
+        browser worker; no server or account is required.
+      </p>
+      <h2>Sources and interpretation</h2>
+      <ol>
+        <li>
+          <a
+            href="https://github.com/OrcaSlicer/OrcaSlicer/wiki/strength_settings_patterns"
+            target="_blank"
+            rel="noreferrer"
+          >
+            OrcaSlicer: infill patterns
+          </a>{" "}
+          and{" "}
+          <a
+            href="https://github.com/OrcaSlicer/OrcaSlicer/wiki/multimaterial_settings_flush_options"
+            target="_blank"
+            rel="noreferrer"
+          >
+            flush options
+          </a>
+          . Pattern terminology and existing flush-to-infill practice. Reusing
+          purge in infill alone is not a novelty claim.
+        </li>
+        <li>
+          <a
+            href="https://doi.org/10.36922/msam.2672"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Goh et al. (2024), Enhancing interlaminar adhesion in multi-material
+            3D printing.
+          </a>{" "}
+          Background for material interfaces, not calibration of the acceptance
+          windows.
+        </li>
+        <li>
+          <a
+            href="https://doi.org/10.3390/polym18020178"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Brackett et al. (2026), Transition Behavior in Blended Material
+            Large Format Additive Manufacturing.
+          </a>{" "}
+          Transition-behaviour context; this app does not transfer large-format
+          parameters to desktop printers.
+        </li>
+        <li>
+          <a
+            href="https://doi.org/10.1007/s40964-024-00570-8"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Frascio et al. (2024), Investigating enhanced interfacial adhesion
+            in multi-material filament 3D printing.
+          </a>{" "}
+          Mechanical-interface context, not proof of TAII performance.
+        </li>
+      </ol>
+      <p className="small">
+        Research status: computational demonstrator with analytical checks.
+        Physical calibration, bead-level geometry validation and mechanical
+        testing remain necessary before structural conclusions.
+      </p>
     </article>
   );
 }

@@ -104,7 +104,7 @@ describe("material accounting and feasibility", () => {
   it("never prints an upper layer before completing every lower-layer track", () => {
     const c = {
         ...DEFAULT,
-        layers: 3,
+        layers: 1,
         transitionVolume: 500,
         acceptance: "uniform" as const,
         iterations: 20,
@@ -163,7 +163,7 @@ describe("input validation", () => {
     expect(
       validateConfig({
         ...DEFAULT,
-        pattern: "chevron",
+        pattern: "taii",
         spacing: 0.5,
         beadWidth: 0.5,
       }).length,
@@ -172,7 +172,7 @@ describe("input validation", () => {
   it("validates imported configuration and ignores stored results", () => {
     expect(
       parseConfig({
-        schema: "infilllab/1",
+        schema: "infilllab/2",
         config: DEFAULT,
         results: ["not trusted"],
       }),
@@ -205,7 +205,7 @@ describe("single material mode", () => {
     const run = runStudy({
       ...DEFAULT,
       mode: "single",
-      layers: 3,
+      layers: 1,
       transitionVolume: 0.1,
       iterations: 10,
     });

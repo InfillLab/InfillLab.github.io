@@ -1,3 +1,4 @@
+import type { Pattern } from "./patterns";
 export type Point = { x: number; y: number; z: number };
 export type Config = {
   mode: "single" | "multi";
@@ -8,7 +9,9 @@ export type Config = {
   beadWidth: number;
   layerHeight: number;
   layers: number;
-  pattern: "parallel" | "chevron" | "ribs";
+  pattern: Pattern;
+  capacityMode: "native" | "equal";
+  hardware: "shared" | "idex";
   acceptance: "uniform" | "graded";
   tolerance: number;
   transitionVolume: number;
@@ -27,6 +30,8 @@ export type Config = {
   purgeRate: number;
 };
 export type Segment = {
+  predecessor?: number;
+  locked?: boolean;
   id: number;
   label: string;
   layer: number;
@@ -65,8 +70,8 @@ export type Result = {
   runtimeMs: number;
 };
 export type Run = {
-  schema: "infilllab/1";
-  modelVersion: "1.0.0";
+  schema: "infilllab/2";
+  modelVersion: "2.0.0";
   createdAt: string;
   config: Config;
   segments: Segment[];
@@ -82,7 +87,9 @@ export const DEFAULT: Config = {
   beadWidth: 0.5,
   layerHeight: 0.2,
   layers: 1,
-  pattern: "parallel",
+  pattern: "taii",
+  capacityMode: "native",
+  hardware: "shared",
   acceptance: "graded",
   tolerance: 0.22,
   transitionVolume: 60,
