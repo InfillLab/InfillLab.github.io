@@ -6,6 +6,8 @@ export type Config = {
   width: number;
   height: number;
   spacing: number;
+  segmentLength: number;
+  travelReference: number;
   beadWidth: number;
   layerHeight: number;
   layers: number;
@@ -71,7 +73,7 @@ export type Result = {
 };
 export type Run = {
   schema: "infilllab/2";
-  modelVersion: "2.0.0";
+  modelVersion: "2.1.0";
   createdAt: string;
   config: Config;
   segments: Segment[];
@@ -84,6 +86,8 @@ export const DEFAULT: Config = {
   width: 40,
   height: 18,
   spacing: 2,
+  segmentLength: 2,
+  travelReference: 100,
   beadWidth: 0.5,
   layerHeight: 0.2,
   layers: 1,

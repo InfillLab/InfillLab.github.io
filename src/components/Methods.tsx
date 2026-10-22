@@ -3,7 +3,7 @@ export default function Methods() {
   return (
     <article className="methods">
       <div className="eyebrow">
-        MODEL 2.0 / SCOPE, ASSUMPTIONS & VERIFICATION
+        MODEL 2.1 / SCOPE, ASSUMPTIONS & VERIFICATION
       </div>
       <h1>What this experiment can establish.</h1>
       <p>
@@ -61,8 +61,8 @@ export default function Methods() {
       <p>
         Connected reference curves preserve segment order and direction.
         Monotonic variants preserve global order. Other paths may be reordered
-        and reversed. Candidate allocation segments have nominal length max(2
-        mm, total controlled length / 70), with shorter residual segments at
+        and reversed. Candidate allocation segments have a configurable nominal
+        length (default 2 mm), with shorter residual segments at
         path ends. This segmentation affects feasibility and is part of the
         experimental definition. Optimising a reference changes its execution
         order only where allowed.
@@ -134,9 +134,12 @@ export default function Methods() {
         implementation or validation of the canonical Slime Mould Algorithm.
         Complete schedules rank above partial schedules; among partial
         schedules, greater receiver coverage ranks first. The weighted objective
-        J = α Vdis/Vtr + (1 - α) Ltravel/Lref breaks ties, where Lref is the
-        number of receiver segments multiplied by the region diagonal including
-        one layer height. Thus α does not trade away coverage.
+        J = α Vdis/Vtr + (1 - α) Ltravel/Lref breaks ties. Lref is a fixed
+        configurable distance (default 100 mm), independent of segment count.
+        Thus α does not trade away coverage. The nearest-feasible baseline
+        minimises travel plus three times the preceding purge volume, with a
+        coefficient of 3 mm/mm³. Adaptive search retains the better baseline,
+        so the absence of regression is guaranteed by construction.
       </p>
       <p>
         For a fixed configuration and seed, the schedule is reproducible. The
@@ -151,7 +154,9 @@ export default function Methods() {
         JSON records the complete versioned configuration, geometry, schedules,
         traces and presentation colours. CSV includes numerical summaries and
         configuration. Version 1 experiments must be recreated because their
-        patterns and layer assumptions differ. All calculations run locally in a
+        patterns and layer assumptions differ. Version 2.0 results also require
+        recalculation: version 2.1 fixes segment length and travel normalisation
+        as explicit parameters. All calculations run locally in a
         browser worker; no server or account is required.
       </p>
       <h2>Sources and interpretation</h2>

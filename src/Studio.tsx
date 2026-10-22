@@ -233,7 +233,7 @@ export default function Studio() {
           }}
         >
           <span className="brand-mark">≋</span>InfillLab
-          <span className="version">2.0</span>
+          <span className="version">2.1</span>
         </a>
         <nav aria-label="Main navigation">
           {["workspace", "compare", "methods"].map((p) => (
@@ -1039,7 +1039,7 @@ export default function Studio() {
         )}
       </main>
       <footer>
-        InfillLab / Model 2.0 · Reproducible scheduling, explicit assumptions.
+        InfillLab / Model 2.1 · Reproducible scheduling, explicit assumptions.
         <span>No predicted strength. No machine-ready G-code.</span>
       </footer>
       <dialog
@@ -1210,6 +1210,7 @@ export default function Studio() {
                   <div className="field-grid">
                     {number("beadWidth", "Bead width (mm)", 0.2, 2, 0.05)}
                     {number("layerHeight", "Layer height (mm)", 0.05, 1, 0.05)}
+                    {number("segmentLength", "Segment length (mm)", 0.5, 20, 0.5)}
                     {multi && (
                       <>
                         {number("gamma", "Composition exponent γ", 0.2, 5, 0.1)}
@@ -1277,9 +1278,10 @@ export default function Studio() {
               <summary>Search and repeatability</summary>
               <div className="field-grid">
                 {number("iterations", "Iterations per seed", 10, 2000, 10)}
-                {number("replicates", "Seeds", 1, 10)}
+                {number("replicates", "Seeds", 1, 30)}
                 {number("seed", "Starting seed", 0, 4294967295)}
                 {number("alpha", "Discard weight α", 0, 1, 0.05)}
+                {number("travelReference", "Travel reference (mm)", 1, 10000, 10)}
               </div>
             </details>
             {validateConfig(draft).length > 0 && (

@@ -203,7 +203,7 @@ export function patternGeometry(c: Config): Segment[] {
         )
       : total;
   const factor = total > 0 ? common / total : 1,
-    unit = Math.max(2, common / 70),
+    unit = c.segmentLength,
     out: Segment[] = [];
   let previousGlobal: number | undefined;
   for (const raw of native) {

@@ -59,6 +59,30 @@ describe("analytical verification", () => {
   });
 });
 describe("material accounting and feasibility", () => {
+  it("discards everything when local and global composition windows do not overlap", () => {
+    const c = { ...DEFAULT, iterations: 10, eligibleLow: 0.7, eligibleHigh: 0.9 };
+    const s = geometry(c).map((seg) => ({ ...seg, low: 0.1, high: 0.3 }));
+    const r = adaptive(c, s, 1);
+    expect(r.used).toBe(0);
+    expect(r.discarded).toBe(c.transitionVolume);
+    expect(r.complete).toBe(false);
+  });
+  it("handles an empty receiving region without creating reused volume", () => {
+    const c = { ...DEFAULT, iterations: 10 };
+    const r = adaptive(c, [], 1);
+    expect(bounds(c, []).upperUse).toBe(0);
+    expect(r.used).toBe(0);
+    expect(r.discarded).toBe(c.transitionVolume);
+    expect(r.coverage).toBe(0);
+    expect(Number.isFinite(r.score)).toBe(true);
+  });
+  it("uses the same declared travel normalisation across segment resolutions", () => {
+    for (const segmentLength of [0.5, 2, 8]) {
+      const c = { ...DEFAULT, segmentLength, iterations: 10, travelReference: 100 };
+      const r = adaptive(c, geometry(c), 1);
+      expect(r.score).toBeCloseTo(c.alpha * r.discarded / c.transitionVolume + (1 - c.alpha) * r.travel / 100, 10);
+    }
+  });
   it("conserves volume and honours every deposited track window over multiple curves and directions", () => {
     for (const direction of ["AB", "BA"] as const)
       for (const gamma of [0.2, 0.7, 1, 3, 5]) {
@@ -122,7 +146,7 @@ describe("material accounting and feasibility", () => {
     }
   });
   it("reports unassigned tracks if transition volume cannot contain even one track", () => {
-    const c = { ...DEFAULT, transitionVolume: 0.1, iterations: 10 },
+    const c = { ...DEFAULT, pattern: "rectilinear" as const, transitionVolume: 0.1, iterations: 10 },
       s = geometry(c),
       r = adaptive(c, s, 1);
     expect(r.used).toBe(0);

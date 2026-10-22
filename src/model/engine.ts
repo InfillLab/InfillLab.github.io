@@ -49,6 +49,8 @@ export function validateConfig(c: Config): string[] {
   range("width", 5, 150);
   range("height", 2, 100);
   range("spacing", 0.5, 20);
+  range("segmentLength", 0.5, 20);
+  range("travelReference", 1, 10000);
   range("beadWidth", 0.2, 2);
   range("layerHeight", 0.05, 1);
   range("layers", 1, 6, true);
@@ -60,7 +62,7 @@ export function validateConfig(c: Config): string[] {
   range("alpha", 0, 1);
   range("iterations", 10, 2000, true);
   range("seed", 0, 4294967295, true);
-  range("replicates", 1, 10, true);
+  range("replicates", 1, 30, true);
   range("depositSpeed", 1, 300);
   range("travelSpeed", 1, 500);
   range("purgeRate", 0.1, 50);
@@ -198,6 +200,7 @@ export function bounds(c: Config, segments = geometry(c)) {
     eligibleFraction: eligible / c.transitionVolume,
   };
 }
+const windowCache = new WeakMap<Config, WeakMap<Segment, [number, number] | null>>();
 export function place(
   s: Segment,
   reverse: boolean,
@@ -206,41 +209,47 @@ export function place(
   c: Config,
 ): Step | null {
   if (c.mode === "single") {
-    const points = reverse ? [...s.points].reverse() : s.points;
+    const target = reverse ? s.points[s.points.length-1] : s.points[0];
     return {
       id: s.id,
       reverse,
       start: cursor,
       end: cursor + s.volume,
       purgeBefore: 0,
-      travel: distance(from, points[0]),
+      travel: distance(from, target),
       cStart: 0,
       cEnd: 0,
       travelFrom: from,
-      travelTo: points[0],
+      travelTo: target,
     };
   }
-  const low = Math.max(c.eligibleLow, s.low),
-    high = Math.min(c.eligibleHigh, s.high);
-  if (low >= high) return null;
-  const [a, b] = interval(low, high, c);
+  let cache = windowCache.get(c);
+  if (!cache) { cache = new WeakMap(); windowCache.set(c, cache); }
+  let window = cache.get(s);
+  if (window === undefined) {
+    const low = Math.max(c.eligibleLow, s.low), high = Math.min(c.eligibleHigh, s.high);
+    window = low >= high ? null : interval(low, high, c);
+    cache.set(s, window);
+  }
+  if (window === null) return null;
+  const [a, b] = window;
   const start = Math.max(cursor, a),
     end = start + s.volume;
   if (end > b + EPS || end > c.transitionVolume + EPS) return null;
   // The analytical benchmark disallows purging, exactly as in the manuscript.
   if (c.preset === "benchmark" && start > cursor + EPS) return null;
-  const points = reverse ? [...s.points].reverse() : s.points;
+  const target = reverse ? s.points[s.points.length-1] : s.points[0];
   return {
     id: s.id,
     reverse,
     start,
     end,
     purgeBefore: Math.max(0, start - cursor),
-    travel: distance(from, points[0]),
+    travel: distance(from, target),
     cStart: composition(start, c),
     cEnd: composition(end, c),
     travelFrom: from,
-    travelTo: points[0],
+    travelTo: target,
   };
 }
 export function assemble(
@@ -254,10 +263,7 @@ export function assemble(
   const depositionLength = steps.reduce((n, s) => n + segments[s.id].length, 0);
   const discarded = Math.max(0, c.transitionVolume - used);
   const capacity = bounds(c, segments).capacity;
-  const reference = Math.max(
-    EPS,
-    segments.length * Math.hypot(c.width, c.height, c.layers * c.layerHeight),
-  );
+  const reference = c.travelReference;
   const visited = new Set(steps.map((s) => s.id));
   const unassigned = segments
     .filter((s) => !visited.has(s.id))
@@ -505,7 +511,7 @@ export function runStudy(
   if (c.preset === "benchmark") results.push(exactBenchmark(c, segments));
   return {
     schema: "infilllab/2",
-    modelVersion: "2.0.0",
+    modelVersion: "2.1.0",
     createdAt: new Date().toISOString(),
     config: c,
     segments,
